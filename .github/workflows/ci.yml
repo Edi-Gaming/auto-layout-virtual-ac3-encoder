@@ -45,6 +45,7 @@ jobs:
           Copy-Item engine/build/Release/*.dll dist-test/
           Copy-Item installer/default.conf dist-test/virtual-ac3-encoder.conf
           Copy-Item scripts/install-day-to-day.ps1 dist-test/
+          Copy-Item scripts/install-day-to-day.cmd dist-test/INSTALL-DAY-TO-DAY.cmd
 
       - name: Upload test build
         uses: actions/upload-artifact@v4
