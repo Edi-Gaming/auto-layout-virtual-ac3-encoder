@@ -50,6 +50,15 @@ Terminal controls:
 If the hidden engine is already running, simply double-clicking engine.exe also opens the
 mode switcher.
 
+Day-to-day tray control
+-----------------------
+The installed background engine shows a Windows notification-area icon by default. Right-click it
+to switch SURROUND/GUITAR modes, open the larger mode switcher, open engine.log, or exit cleanly.
+Double-click the icon to open the larger mode switcher.
+
+Set tray=0 in virtual-ac3-encoder.conf or launch with --no-tray if you intentionally want a
+headless engine.
+
 Handy commands (open a terminal in this folder)
 -----------------------------------------------
        engine.exe --list      list audio input/output devices
