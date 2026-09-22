@@ -142,6 +142,35 @@ engine\build\Release\engine.exe --in "CABLE Output" --out "Realtek Digital Outpu
 Set the virtual device as the Windows default 5.1 output, play surround content, and switch the
 receiver to the matching optical input — it should report Dolby Digital.
 
+### Low-latency guitar mode
+
+Live guitar monitoring should not be routed through the AC3 path: one AC3 frame is 1536 samples,
+which is already 32 ms at 48 kHz before DAW/plugin, virtual-cable, receiver, and other buffering.
+
+The engine therefore has a persistent runtime mode switcher:
+
+```powershell
+engine.exe --switcher
+# or:
+engine.exe --mode guitar
+engine.exe --mode surround
+engine.exe --mode status
+```
+
+**SURROUND** is the normal VB-CABLE -> AC3 -> S/PDIF path.
+
+**GUITAR** stops and destroys the live WASAPI capture/passthrough objects while keeping the
+background `engine.exe` process alive. Destroying the output object releases the exclusive S/PDIF
+`IAudioClient`, allowing ASIO4ALL / AmpliTube to open the Realtek optical endpoint directly with
+the low-latency PCM path. Switching back to SURROUND reconstructs the normal pipeline and
+reacquires S/PDIF. If another application still owns S/PDIF, the engine reports the error and
+retries every two seconds.
+
+When the hidden background engine is already running, double-clicking `engine.exe` with no
+arguments opens the mode switcher instead of starting a duplicate engine. The installer also adds
+an **Audio mode switcher** Start Menu shortcut.
+
+
 ## Set and forget (autostart)
 
 Install the engine to a stable per-user location and have it start hidden at every logon, with
