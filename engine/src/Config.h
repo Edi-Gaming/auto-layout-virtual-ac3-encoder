@@ -10,6 +10,7 @@ struct Config
   bool loopback = false; // capture the input as a RENDER endpoint via WASAPI loopback
                          // (the render-only virtual-driver architecture)
   bool monitor = false;  // capture-only diagnostic: report input throughput, then exit
+  bool tray = true;       // persistent background engine exposes a Windows notification-area icon
   int  monitorSeconds = 5;
   int  durationSeconds = 0; // 0 = run until Ctrl+C; otherwise auto-stop after N seconds
 
