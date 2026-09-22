@@ -193,6 +193,13 @@ the icon is re-added automatically.
 
 Set `tray=0` in the config or pass `--no-tray` for headless operation.
 
+For the CI portable build, extract the artifact and double-click **`INSTALL-DAY-TO-DAY.cmd`**.
+It replaces the staged engine/DLLs, preserves an existing working config, enables tray control,
+refreshes the Startup supervisor, creates an Audio Mode Switcher Start Menu shortcut, and starts
+the new background engine. Tray **Exit engine** is an intentional stop: the supervisor recognizes
+the engine's dedicated exit code and does not immediately restart it; normal logon autostart
+remains installed.
+
 
 ## Set and forget (autostart)
 
