@@ -57,7 +57,8 @@ static std::string Trim(const std::string& s)
 }
 
 // Load a `key=value` config file (# or ; comments). CLI args override these.
-// Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif.
+// Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
+//       layout, auto_threshold_db, auto_hold_ms.
 static void LoadConfigFile(const std::string& path, Config& c)
 {
   std::ifstream f(path);
@@ -72,15 +73,18 @@ static void LoadConfigFile(const std::string& path, Config& c)
     std::string k = Trim(s.substr(0, eq));
     std::string v = Trim(s.substr(eq + 1));
     auto truthy = [](const std::string& x) { return x == "1" || x == "true" || x == "yes"; };
-    if      (k == "in")        c.inName = Widen(v.c_str());
-    else if (k == "in_id")     c.inId = Widen(v.c_str());
-    else if (k == "out")       c.outName = Widen(v.c_str());
-    else if (k == "out_id")    c.outId = Widen(v.c_str());
-    else if (k == "bitrate")   c.bitRate = std::strtoll(v.c_str(), nullptr, 10);
-    else if (k == "safe")      c.safeFrames = (uint32_t)std::strtoul(v.c_str(), nullptr, 10);
-    else if (k == "loopback")  c.loopback = truthy(v);
-    else if (k == "out_spdif") c.outAutoSpdif = truthy(v);
-    else if (k == "upmix")     c.upmix = v;
+    if      (k == "in")                c.inName = Widen(v.c_str());
+    else if (k == "in_id")             c.inId = Widen(v.c_str());
+    else if (k == "out")               c.outName = Widen(v.c_str());
+    else if (k == "out_id")            c.outId = Widen(v.c_str());
+    else if (k == "bitrate")           c.bitRate = std::strtoll(v.c_str(), nullptr, 10);
+    else if (k == "safe")              c.safeFrames = (uint32_t)std::strtoul(v.c_str(), nullptr, 10);
+    else if (k == "loopback")          c.loopback = truthy(v);
+    else if (k == "out_spdif")         c.outAutoSpdif = truthy(v);
+    else if (k == "upmix")             c.upmix = v;
+    else if (k == "layout")            c.layout = v;
+    else if (k == "auto_threshold_db") c.autoThresholdDb = std::strtod(v.c_str(), nullptr);
+    else if (k == "auto_hold_ms")      c.autoHoldMs = (uint32_t)std::strtoul(v.c_str(), nullptr, 10);
   }
   std::printf("Loaded config: %s\n", path.c_str());
 }
@@ -99,16 +103,27 @@ static void ParseArgs(int argc, char** argv, Config& c)
     else if (a == "--probe")      c.probe = true;
     else if (a == "--loopback")   c.loopback = true;
     else if (a == "--mon")        c.monitor = true;
-    else if (a == "--duration" && i + 1 < argc) c.durationSeconds = (int)std::strtol(argv[++i], nullptr, 10);
+    else if (a == "--duration" && i + 1 < argc)
+      c.durationSeconds = (int)std::strtol(argv[++i], nullptr, 10);
     else if (a == "--in")         c.inName = next();
     else if (a == "--in-id")      c.inId = next();
     else if (a == "--out")        c.outName = next();
     else if (a == "--out-id")     c.outId = next();
     else if (a == "--out-spdif")  c.outAutoSpdif = true;
-    else if (a == "--bitrate" && i + 1 < argc) c.bitRate = std::strtoll(argv[++i], nullptr, 10);
-    else if (a == "--safe" && i + 1 < argc)    c.safeFrames = (uint32_t)std::strtoul(argv[++i], nullptr, 10);
-    else if (a == "--upmix" && i + 1 < argc)   c.upmix = argv[++i];
-    else std::fprintf(stderr, "ignoring unknown arg: %s\n", a.c_str());
+    else if (a == "--bitrate" && i + 1 < argc)
+      c.bitRate = std::strtoll(argv[++i], nullptr, 10);
+    else if (a == "--safe" && i + 1 < argc)
+      c.safeFrames = (uint32_t)std::strtoul(argv[++i], nullptr, 10);
+    else if (a == "--upmix" && i + 1 < argc)
+      c.upmix = argv[++i];
+    else if (a == "--layout" && i + 1 < argc)
+      c.layout = argv[++i];
+    else if (a == "--auto-threshold-db" && i + 1 < argc)
+      c.autoThresholdDb = std::strtod(argv[++i], nullptr);
+    else if (a == "--auto-hold-ms" && i + 1 < argc)
+      c.autoHoldMs = (uint32_t)std::strtoul(argv[++i], nullptr, 10);
+    else
+      std::fprintf(stderr, "ignoring unknown arg: %s\n", a.c_str());
   }
 }
 
@@ -119,7 +134,11 @@ static bool ResolveCapture(const Config& c, ComPtr<IMMDevice>& dev, EndpointInfo
   const EDataFlow flow = c.loopback ? eRender : eCapture;
   if (!c.inId.empty())
   {
-    if (!DeviceEnum::GetById(c.inId, dev)) { std::fprintf(stderr, "input id not found\n"); return false; }
+    if (!DeviceEnum::GetById(c.inId, dev))
+    {
+      std::fprintf(stderr, "input id not found\n");
+      return false;
+    }
     info.id = c.inId;
     return true;
   }
@@ -134,20 +153,30 @@ static bool ResolveOutput(const Config& c, ComPtr<IMMDevice>& dev, EndpointInfo&
 {
   if (!c.outId.empty())
   {
-    if (!DeviceEnum::GetById(c.outId, dev)) { std::fprintf(stderr, "output id not found\n"); return false; }
+    if (!DeviceEnum::GetById(c.outId, dev))
+    {
+      std::fprintf(stderr, "output id not found\n");
+      return false;
+    }
     info.id = c.outId;
     return true;
   }
   if (!c.outName.empty())
   {
-    if (DeviceEnum::FindByNameSubstring(eRender, c.outName, dev, info)) return true;
-    std::fprintf(stderr, "output device matching \"%s\" not found (try --list)\n", Narrow(c.outName.c_str()).c_str());
+    if (DeviceEnum::FindByNameSubstring(eRender, c.outName, dev, info))
+      return true;
+    std::fprintf(stderr, "output device matching \"%s\" not found (try --list)\n",
+                 Narrow(c.outName.c_str()).c_str());
     return false;
   }
   if (c.outAutoSpdif)
   {
     for (const auto& e : DeviceEnum::List(eRender))
-      if (e.isSpdif) { info = e; return DeviceEnum::GetById(e.id, dev); }
+      if (e.isSpdif)
+      {
+        info = e;
+        return DeviceEnum::GetById(e.id, dev);
+      }
     std::fprintf(stderr, "no SPDIF output endpoint found (try --list / --out)\n");
     return false;
   }
@@ -216,16 +245,27 @@ int main(int argc, char** argv)
   std::printf("virtual-ac3-encoder %s\n", VAC3_VERSION);
 
   ComApartment com;
-  if (!com.ok()) { std::fprintf(stderr, "CoInitializeEx failed\n"); return 1; }
+  if (!com.ok())
+  {
+    std::fprintf(stderr, "CoInitializeEx failed\n");
+    return 1;
+  }
 
   // Config precedence: defaults < config file < command line.
   // Default config path is next to the exe; override with --config <path>.
   Config cfg;
   std::string cfgPath = ExeDir() + "\\virtual-ac3-encoder.conf";
   for (int i = 1; i + 1 < argc; ++i)
-    if (std::string(argv[i]) == "--config") cfgPath = argv[i + 1];
+    if (std::string(argv[i]) == "--config")
+      cfgPath = argv[i + 1];
   LoadConfigFile(cfgPath, cfg);
   ParseArgs(argc, argv, cfg);
+
+  if (cfg.layout != "auto" && cfg.layout != "5.1")
+  {
+    std::fprintf(stderr, "invalid layout \"%s\"; expected auto or 5.1\n", cfg.layout.c_str());
+    return 1;
+  }
 
   if (cfg.listDevices)
   {
@@ -254,7 +294,8 @@ int main(int argc, char** argv)
 
   ComPtr<IMMDevice> inDev;
   EndpointInfo inInfo;
-  if (!ResolveCapture(cfg, inDev, inInfo)) return 1;
+  if (!ResolveCapture(cfg, inDev, inInfo))
+    return 1;
   std::printf("Input   : %s %s\n", Narrow(inInfo.name.c_str()).c_str(),
               cfg.loopback ? "(loopback)" : "(capture)");
 
@@ -265,11 +306,14 @@ int main(int argc, char** argv)
 
   ComPtr<IMMDevice> outDev;
   EndpointInfo outInfo;
-  if (!ResolveOutput(cfg, outDev, outInfo)) return 1;
-  std::printf("Output  : %s %s\n", Narrow(outInfo.name.c_str()).c_str(), outInfo.isSpdif ? "[SPDIF]" : "");
+  if (!ResolveOutput(cfg, outDev, outInfo))
+    return 1;
+  std::printf("Output  : %s %s\n", Narrow(outInfo.name.c_str()).c_str(),
+              outInfo.isSpdif ? "[SPDIF]" : "");
 
   WasapiCapture capture;
-  if (!capture.Init(inDev.Get(), cfg.loopback)) return 1;
+  if (!capture.Init(inDev.Get(), cfg.loopback))
+    return 1;
 
   const CaptureFormat& cf = capture.Format();
   // Ring sized to ~8 AC3 packets of capture audio (drift absorber).
@@ -281,12 +325,30 @@ int main(int argc, char** argv)
   pp.bitRate = cfg.bitRate;
   pp.safeFrames = cfg.safeFrames;
   pp.upmixSurround = (cfg.upmix == "surround");
+  pp.autoLayout = (cfg.layout == "auto");
+  pp.autoThresholdDb = cfg.autoThresholdDb;
+  pp.autoHoldMs = cfg.autoHoldMs;
+
+  std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
+  if (pp.autoLayout)
+    std::printf(" (threshold %.1f dBFS, hold %u ms)", pp.autoThresholdDb, pp.autoHoldMs);
+  std::printf("\n");
 
   WasapiPassthrough out;
-  if (!out.Init(outDev.Get(), &ring, cf, pp)) return 1;
+  if (!out.Init(outDev.Get(), &ring, cf, pp))
+    return 1;
 
-  if (!out.Start())     { std::fprintf(stderr, "passthrough start failed\n"); return 1; }
-  if (!capture.Start()) { std::fprintf(stderr, "capture start failed\n"); out.Stop(); return 1; }
+  if (!out.Start())
+  {
+    std::fprintf(stderr, "passthrough start failed\n");
+    return 1;
+  }
+  if (!capture.Start())
+  {
+    std::fprintf(stderr, "capture start failed\n");
+    out.Stop();
+    return 1;
+  }
 
   if (cfg.durationSeconds > 0)
     std::printf("Running for %d s (or Ctrl+C)...\n", cfg.durationSeconds);
