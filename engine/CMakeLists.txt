@@ -70,6 +70,8 @@ stage_ffmpeg_dlls(encode_wav)
 add_executable(engine
   src/main.cpp
   src/Config.h
+  src/BrandIcon.cpp
+  src/BrandIcon.h
   src/ComUtil.cpp
   src/ComUtil.h
   src/Guids.cpp
