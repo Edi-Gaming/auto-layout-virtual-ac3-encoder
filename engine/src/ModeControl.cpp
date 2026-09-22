@@ -371,7 +371,8 @@ int RunModeSwitcherGui()
 {
   HINSTANCE instance = GetModuleHandleW(nullptr);
 
-  WNDCLASSW wc = {};
+  WNDCLASSEXW wc = {};
+  wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = SwitcherWndProc;
   wc.hInstance = instance;
   wc.lpszClassName = kWindowClass;
@@ -381,7 +382,7 @@ int RunModeSwitcherGui()
   gBackgroundBrush = CreateSolidBrush(RGB(15, 17, 23));
   wc.hbrBackground = gBackgroundBrush;
 
-  RegisterClassW(&wc);
+  RegisterClassExW(&wc);
 
   HWND hwnd = CreateWindowExW(
       0,
