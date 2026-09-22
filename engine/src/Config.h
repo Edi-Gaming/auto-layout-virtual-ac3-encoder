@@ -25,8 +25,17 @@ struct Config
   int64_t  bitRate = 640000;
   uint32_t safeFrames = 1536;
 
-  // Stereo->5.1 upmix mode for <=2ch input: "off" (swr default) or "surround"
-  // (FFmpeg `surround` FFT upmix). Multichannel input is always downmixed to 5.1.
-  // Default "surround": this tool targets a 5.1 optical path, so stereo sources use all speakers.
+  // Stereo->5.1 upmix mode for <=2ch input in fixed-5.1 mode: "off" (swr default) or
+  // "surround" (FFmpeg `surround` FFT upmix). In auto layout, genuine stereo is encoded
+  // as AC3 2.0 instead so the receiver can apply its own PLII/A.F.D. processing.
   std::string upmix = "surround";
+
+  // AC3 payload layout:
+  //   "auto" — inspect actual PCM activity; encode 2.0 until C/LFE/surround becomes active,
+  //            then switch to 5.1 and hold it until those channels stay quiet long enough.
+  //   "5.1"  — preserve upstream behavior: always encode AC3 5.1.
+  // This fork defaults to auto because that is its purpose; set layout=5.1 for compatibility.
+  std::string layout = "auto";
+  double   autoThresholdDb = -60.0;
+  uint32_t autoHoldMs = 2000;
 };
