@@ -139,6 +139,18 @@ Write-Host "Installed engine -> $InstallDir"
 Write-Host "Preserved config  -> $configDst"
 Write-Host "Tray control      -> enabled"
 Write-Host "Mode shortcut     -> $shortcutPath"
+Write-Host ''
+Write-Host 'Preflight: launching the staged engine directly...'
+
+# Run a tiny foreground preflight before hiding it behind wscript. If Windows cannot load the EXE
+# at all (for example a missing VC runtime DLL), main() never runs and engine.log cannot exist.
+$preflight = Start-Process -FilePath $exePath -ArgumentList '--version' -WorkingDirectory $InstallDir -Wait -PassThru
+if ($preflight.ExitCode -ne 0) {
+  $hex = ('0x{0:X8}' -f ([uint32]$preflight.ExitCode))
+  throw "engine.exe failed before daemon startup. Exit code: $($preflight.ExitCode) ($hex). This is usually a loader/dependency problem; the build should include its MSVC runtime DLLs."
+}
+
+Write-Host 'Preflight passed.'
 Write-Host 'Starting background engine...'
 
 Start-Process -FilePath "$env:WINDIR\System32\wscript.exe" -ArgumentList ('"' + $supervisorPath + '"') -WindowStyle Hidden
@@ -148,7 +160,14 @@ $running = @(Get-CimInstance Win32_Process -Filter "Name='engine.exe'" -ErrorAct
   Where-Object { $_.ExecutablePath -like "$InstallDir*" }).Count -gt 0
 
 if (-not $running) {
-  throw "engine.exe did not stay running. Check $logPath"
+  if (Test-Path $logPath) {
+    Write-Host ''
+    Write-Host '----- engine.log -----'
+    Get-Content $logPath -Tail 80 | ForEach-Object { Write-Host $_ }
+    Write-Host '----------------------'
+    throw "engine.exe started but did not stay running. The last engine.log lines are above."
+  }
+  throw "engine.exe did not stay running and no engine.log was created. The process likely failed before main() or the supervisor could not launch it."
 }
 
 Write-Host ''
