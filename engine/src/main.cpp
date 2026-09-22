@@ -1,16 +1,22 @@
 // main.cpp — virtual-ac3-encoder engine entry point.
 //
-// Wires capture -> ring buffer -> AC3/IEC61937 passthrough:
-//   * captures multichannel PCM from a virtual cable's recording endpoint (shared)
-//   * encodes it to AC3 and streams it to a chosen optical output (exclusive passthrough)
+// Wires capture -> ring buffer -> AC3/IEC61937 passthrough and now also owns a small
+// persistent runtime control plane:
+//   * SURROUND mode: normal VB-CABLE -> AC3 -> exclusive S/PDIF pipeline
+//   * GUITAR mode:   destroys the WASAPI pipeline and releases S/PDIF for ASIO4ALL
 //
-//   engine.exe --list
-//   engine.exe --in "CABLE Output" --out "Digital Output"
-//   engine.exe --in-id {0.0.1...} --out-id {0.0.0...} --bitrate 640000
+// Control commands (sent to the already-running background engine):
+//   engine.exe --mode surround
+//   engine.exe --mode guitar
+//   engine.exe --mode status
+//
+// Native two-button controller:
+//   engine.exe --switcher
 //
 #include "ComUtil.h"
 #include "Config.h"
 #include "DeviceEnum.h"
+#include "ModeControl.h"
 #include "RingBuffer.h"
 #include "WasapiCapture.h"
 #include "WasapiPassthrough.h"
@@ -20,6 +26,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -56,7 +64,7 @@ static std::string Trim(const std::string& s)
   return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
 }
 
-// Load a `key=value` config file (# or ; comments). CLI args override these.
+// Load a key=value config file (# or ; comments). CLI args override these.
 // Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
 //       layout, auto_threshold_db, auto_hold_ms.
 static void LoadConfigFile(const std::string& path, Config& c)
@@ -96,9 +104,9 @@ static void ParseArgs(int argc, char** argv, Config& c)
     std::string a = argv[i];
     auto next = [&]() -> std::wstring { return (i + 1 < argc) ? Widen(argv[++i]) : std::wstring(); };
     if (a == "--config")          { if (i + 1 < argc) ++i; } // handled before ParseArgs
-    else if (a == "--hidden")     {}                          // handled in the pre-scan above
-    else if (a == "--log")        { if (i + 1 < argc) ++i; }  // handled in the pre-scan above
-    else if (a == "--version" || a == "-v") {}                // handled in the pre-scan above
+    else if (a == "--hidden")     {}                          // handled in the pre-scan
+    else if (a == "--log")        { if (i + 1 < argc) ++i; }  // handled in the pre-scan
+    else if (a == "--version" || a == "-v") {}                // handled in the pre-scan
     else if (a == "--list")       c.listDevices = true;
     else if (a == "--probe")      c.probe = true;
     else if (a == "--loopback")   c.loopback = true;
@@ -129,8 +137,6 @@ static void ParseArgs(int argc, char** argv, Config& c)
 
 static bool ResolveCapture(const Config& c, ComPtr<IMMDevice>& dev, EndpointInfo& info)
 {
-  // In loopback mode the "input" is a RENDER endpoint (the virtual sink); otherwise it's a
-  // real capture endpoint.
   const EDataFlow flow = c.loopback ? eRender : eCapture;
   if (!c.inId.empty())
   {
@@ -214,6 +220,139 @@ static int RunMonitor(const Config& c, IMMDevice* inDev)
   return 0;
 }
 
+struct RunningPipeline
+{
+  std::unique_ptr<RingBuffer> ring;
+  std::unique_ptr<WasapiCapture> capture;
+  std::unique_ptr<WasapiPassthrough> output;
+
+  ~RunningPipeline()
+  {
+    Stop();
+  }
+
+  void Stop()
+  {
+    if (capture) capture->Stop();
+    if (output) output->Stop();
+
+    // Destruction is intentional here. Stop() alone leaves IAudioClient/IMMDevice COM references
+    // alive; destroying the objects fully releases exclusive S/PDIF ownership for ASIO4ALL.
+    output.reset();
+    capture.reset();
+    ring.reset();
+  }
+};
+
+static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, std::string& error)
+{
+  error.clear();
+
+  ComPtr<IMMDevice> inDev;
+  EndpointInfo inInfo;
+  if (!ResolveCapture(cfg, inDev, inInfo))
+  {
+    error = "input endpoint not found";
+    return nullptr;
+  }
+
+  ComPtr<IMMDevice> outDev;
+  EndpointInfo outInfo;
+  if (!ResolveOutput(cfg, outDev, outInfo))
+  {
+    error = "S/PDIF output endpoint not found";
+    return nullptr;
+  }
+
+  std::printf("Input   : %s %s\n", Narrow(inInfo.name.c_str()).c_str(),
+              cfg.loopback ? "(loopback)" : "(capture)");
+  std::printf("Output  : %s %s\n", Narrow(outInfo.name.c_str()).c_str(),
+              outInfo.isSpdif ? "[SPDIF]" : "");
+
+  auto p = std::make_unique<RunningPipeline>();
+  p->capture = std::make_unique<WasapiCapture>();
+  if (!p->capture->Init(inDev.Get(), cfg.loopback))
+  {
+    error = "failed to initialize capture endpoint";
+    return nullptr;
+  }
+
+  const CaptureFormat cf = p->capture->Format();
+  const size_t ringBytes = static_cast<size_t>(8) * 1536 * cf.bytesPerFrame();
+  p->ring = std::make_unique<RingBuffer>(ringBytes);
+  p->capture->SetRing(p->ring.get());
+
+  WasapiPassthrough::Params pp;
+  pp.bitRate = cfg.bitRate;
+  pp.safeFrames = cfg.safeFrames;
+  pp.upmixSurround = (cfg.upmix == "surround");
+  pp.autoLayout = (cfg.layout == "auto");
+  pp.autoThresholdDb = cfg.autoThresholdDb;
+  pp.autoHoldMs = cfg.autoHoldMs;
+
+  std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
+  if (pp.autoLayout)
+    std::printf(" (threshold %.1f dBFS, hold %u ms)", pp.autoThresholdDb, pp.autoHoldMs);
+  std::printf("\n");
+
+  p->output = std::make_unique<WasapiPassthrough>();
+  if (!p->output->Init(outDev.Get(), p->ring.get(), cf, pp))
+  {
+    error = "failed to acquire S/PDIF for AC-3 passthrough (device may be busy)";
+    return nullptr;
+  }
+
+  if (!p->output->Start())
+  {
+    error = "failed to start S/PDIF passthrough";
+    return nullptr;
+  }
+
+  if (!p->capture->Start())
+  {
+    p->output->Stop();
+    error = "failed to start capture";
+    return nullptr;
+  }
+
+  return p;
+}
+
+static bool HandleControllerCommandLine(int argc, char** argv)
+{
+  for (int i = 1; i < argc; ++i)
+  {
+    std::string a = argv[i];
+
+    if (a == "--switcher")
+    {
+      std::exit(RunModeSwitcherGui());
+    }
+
+    if (a == "--mode" && i + 1 < argc)
+    {
+      const std::string command = argv[i + 1];
+      if (command != "surround" && command != "guitar" && command != "status")
+      {
+        std::fprintf(stderr, "invalid --mode value \"%s\"; expected surround, guitar, or status\n",
+                     command.c_str());
+        std::exit(2);
+      }
+
+      std::string response;
+      if (!SendModeCommand(command, response, 1500))
+      {
+        std::fprintf(stderr, "background engine is not reachable\n");
+        std::exit(3);
+      }
+
+      std::printf("%s\n", response.c_str());
+      std::exit(response.rfind("error:", 0) == 0 ? 1 : 0);
+    }
+  }
+  return false;
+}
+
 int main(int argc, char** argv)
 {
   for (int i = 1; i < argc; ++i)
@@ -223,9 +362,9 @@ int main(int argc, char** argv)
       return 0;
     }
 
-  // Pre-scan for --log / --hidden so they apply before any output or device work. These let
-  // the engine run as a Scheduled Task directly (no wscript/cmd wrapper): it hides its own
-  // console and writes its log to a file.
+  HandleControllerCommandLine(argc, argv);
+
+  // Pre-scan for --log / --hidden so they apply before any output or device work.
   for (int i = 1; i < argc; ++i)
   {
     std::string a = argv[i];
@@ -241,18 +380,32 @@ int main(int argc, char** argv)
       std::freopen(argv[i + 1], "a", stderr);
     }
   }
-  setvbuf(stdout, nullptr, _IONBF, 0); // unbuffered so logs aren't lost on abnormal exit
+  setvbuf(stdout, nullptr, _IONBF, 0);
   std::printf("virtual-ac3-encoder %s\n", VAC3_VERSION);
+
+  // Keep exactly one persistent background engine. The switcher and --mode invocations return
+  // above before creating this mutex, so they can coexist with the daemon.
+  HANDLE singleton = CreateMutexW(nullptr, FALSE, L"Local\\VirtualAc3EncoderEngineV1");
+  if (!singleton)
+  {
+    std::fprintf(stderr, "failed to create engine singleton mutex\n");
+    return 1;
+  }
+  if (GetLastError() == ERROR_ALREADY_EXISTS)
+  {
+    std::fprintf(stderr, "another virtual-ac3-encoder engine is already running\n");
+    CloseHandle(singleton);
+    return 4;
+  }
 
   ComApartment com;
   if (!com.ok())
   {
     std::fprintf(stderr, "CoInitializeEx failed\n");
+    CloseHandle(singleton);
     return 1;
   }
 
-  // Config precedence: defaults < config file < command line.
-  // Default config path is next to the exe; override with --config <path>.
   Config cfg;
   std::string cfgPath = ExeDir() + "\\virtual-ac3-encoder.conf";
   for (int i = 1; i + 1 < argc; ++i)
@@ -264,6 +417,7 @@ int main(int argc, char** argv)
   if (cfg.layout != "auto" && cfg.layout != "5.1")
   {
     std::fprintf(stderr, "invalid layout \"%s\"; expected auto or 5.1\n", cfg.layout.c_str());
+    CloseHandle(singleton);
     return 1;
   }
 
@@ -273,6 +427,7 @@ int main(int argc, char** argv)
     DeviceEnum::Print(DeviceEnum::List(eRender));
     std::printf("\nCapture (input) endpoints:\n");
     DeviceEnum::Print(DeviceEnum::List(eCapture));
+    CloseHandle(singleton);
     return 0;
   }
 
@@ -289,83 +444,115 @@ int main(int argc, char** argv)
       std::printf("  %-48s %s  AC3@48k:%s  AC3@44.1k:%s\n", Narrow(e.name.c_str()).c_str(),
                   e.isSpdif ? "[SPDIF]" : "       ", ok48 ? "YES" : "no ", ok44 ? "YES" : "no ");
     }
+    CloseHandle(singleton);
     return 0;
   }
-
-  ComPtr<IMMDevice> inDev;
-  EndpointInfo inInfo;
-  if (!ResolveCapture(cfg, inDev, inInfo))
-    return 1;
-  std::printf("Input   : %s %s\n", Narrow(inInfo.name.c_str()).c_str(),
-              cfg.loopback ? "(loopback)" : "(capture)");
 
   SetConsoleCtrlHandler(CtrlHandler, TRUE);
 
   if (cfg.monitor)
-    return RunMonitor(cfg, inDev.Get());
-
-  ComPtr<IMMDevice> outDev;
-  EndpointInfo outInfo;
-  if (!ResolveOutput(cfg, outDev, outInfo))
-    return 1;
-  std::printf("Output  : %s %s\n", Narrow(outInfo.name.c_str()).c_str(),
-              outInfo.isSpdif ? "[SPDIF]" : "");
-
-  WasapiCapture capture;
-  if (!capture.Init(inDev.Get(), cfg.loopback))
-    return 1;
-
-  const CaptureFormat& cf = capture.Format();
-  // Ring sized to ~8 AC3 packets of capture audio (drift absorber).
-  const size_t ringBytes = static_cast<size_t>(8) * 1536 * cf.bytesPerFrame();
-  RingBuffer ring(ringBytes);
-  capture.SetRing(&ring);
-
-  WasapiPassthrough::Params pp;
-  pp.bitRate = cfg.bitRate;
-  pp.safeFrames = cfg.safeFrames;
-  pp.upmixSurround = (cfg.upmix == "surround");
-  pp.autoLayout = (cfg.layout == "auto");
-  pp.autoThresholdDb = cfg.autoThresholdDb;
-  pp.autoHoldMs = cfg.autoHoldMs;
-
-  std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
-  if (pp.autoLayout)
-    std::printf(" (threshold %.1f dBFS, hold %u ms)", pp.autoThresholdDb, pp.autoHoldMs);
-  std::printf("\n");
-
-  WasapiPassthrough out;
-  if (!out.Init(outDev.Get(), &ring, cf, pp))
-    return 1;
-
-  if (!out.Start())
   {
-    std::fprintf(stderr, "passthrough start failed\n");
-    return 1;
+    ComPtr<IMMDevice> inDev;
+    EndpointInfo inInfo;
+    if (!ResolveCapture(cfg, inDev, inInfo))
+    {
+      CloseHandle(singleton);
+      return 1;
+    }
+    std::printf("Input   : %s %s\n", Narrow(inInfo.name.c_str()).c_str(),
+                cfg.loopback ? "(loopback)" : "(capture)");
+    int rc = RunMonitor(cfg, inDev.Get());
+    CloseHandle(singleton);
+    return rc;
   }
-  if (!capture.Start())
+
+  std::atomic<RuntimeAudioMode> desired{RuntimeAudioMode::Surround};
+  std::atomic<RuntimeAudioMode> current{RuntimeAudioMode::Starting};
+  std::string lastError;
+  std::mutex errorMutex;
+
+  ModeControlServer control;
+  if (!control.Start(&desired, &current, &lastError, &errorMutex))
   {
-    std::fprintf(stderr, "capture start failed\n");
-    out.Stop();
+    std::fprintf(stderr, "[ModeControl] failed to start control server\n");
+    CloseHandle(singleton);
     return 1;
   }
 
-  if (cfg.durationSeconds > 0)
-    std::printf("Running for %d s (or Ctrl+C)...\n", cfg.durationSeconds);
-  else
-    std::printf("Running. Press Ctrl+C to stop.\n");
+  std::printf("[ModeControl] ready: engine.exe --switcher | --mode surround|guitar|status\n");
 
-  auto start = std::chrono::steady_clock::now();
+  std::unique_ptr<RunningPipeline> pipeline;
+  auto nextRetry = std::chrono::steady_clock::now();
+
+  auto startTime = std::chrono::steady_clock::now();
   while (!g_stop.load())
   {
+    const RuntimeAudioMode want = desired.load();
+    const RuntimeAudioMode have = current.load();
+
+    if (want == RuntimeAudioMode::Guitar)
+    {
+      if (have != RuntimeAudioMode::Guitar)
+      {
+        current.store(RuntimeAudioMode::Stopping);
+        std::printf("[ModeControl] switching to GUITAR: releasing capture + exclusive S/PDIF\n");
+        pipeline.reset();
+
+        {
+          std::lock_guard<std::mutex> lock(errorMutex);
+          lastError.clear();
+        }
+
+        current.store(RuntimeAudioMode::Guitar);
+        std::printf("[ModeControl] GUITAR active: S/PDIF is free for ASIO4ALL\n");
+      }
+    }
+    else if (want == RuntimeAudioMode::Surround && have != RuntimeAudioMode::Surround)
+    {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= nextRetry)
+      {
+        current.store(RuntimeAudioMode::Starting);
+        std::printf("[ModeControl] switching to SURROUND: acquiring VB-CABLE + S/PDIF\n");
+
+        std::string err;
+        auto candidate = StartAudioPipeline(cfg, err);
+        if (candidate)
+        {
+          pipeline = std::move(candidate);
+          {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            lastError.clear();
+          }
+          current.store(RuntimeAudioMode::Surround);
+          std::printf("[ModeControl] SURROUND active\n");
+        }
+        else
+        {
+          pipeline.reset();
+          {
+            std::lock_guard<std::mutex> lock(errorMutex);
+            lastError = err;
+          }
+          current.store(RuntimeAudioMode::Error);
+          nextRetry = now + std::chrono::seconds(2);
+          std::fprintf(stderr, "[ModeControl] surround start failed: %s; retrying in 2 s\n",
+                       err.c_str());
+        }
+      }
+    }
+
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     if (cfg.durationSeconds > 0 &&
-        std::chrono::steady_clock::now() - start >= std::chrono::seconds(cfg.durationSeconds))
+        std::chrono::steady_clock::now() - startTime >= std::chrono::seconds(cfg.durationSeconds))
       break;
   }
 
   std::printf("\nStopping...\n");
-  capture.Stop();
-  out.Stop();
+  current.store(RuntimeAudioMode::Stopping);
+  pipeline.reset();
+  control.Stop();
+  CloseHandle(singleton);
   return 0;
 }
