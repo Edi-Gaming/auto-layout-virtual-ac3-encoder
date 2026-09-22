@@ -452,8 +452,13 @@ int main(int argc, char** argv)
   }
   if (GetLastError() == ERROR_ALREADY_EXISTS)
   {
-    std::fprintf(stderr, "another virtual-ac3-encoder engine is already running\n");
     CloseHandle(singleton);
+    // Friendly installed behavior: double-clicking engine.exe while the hidden daemon is
+    // already alive opens the native mode switcher instead of flashing an error console.
+    if (argc == 1)
+      return RunModeSwitcherGui();
+
+    std::fprintf(stderr, "another virtual-ac3-encoder engine is already running\n");
     return 4;
   }
 
