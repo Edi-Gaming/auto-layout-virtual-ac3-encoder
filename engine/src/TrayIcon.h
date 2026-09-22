@@ -19,6 +19,7 @@ public:
              std::string* lastError,
              std::mutex* errorMutex,
              std::atomic_bool* stopEngine,
+             std::atomic_int* requestedExitCode,
              const std::string& logPath);
   void Stop();
 
@@ -38,6 +39,7 @@ private:
   std::string* lastError_ = nullptr;
   std::mutex* errorMutex_ = nullptr;
   std::atomic_bool* stopEngine_ = nullptr;
+  std::atomic_int* requestedExitCode_ = nullptr;
   std::string logPath_;
 
   std::atomic_bool stop_{false};
