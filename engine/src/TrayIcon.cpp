@@ -93,6 +93,7 @@ bool TrayIcon::Start(std::atomic<RuntimeAudioMode>* desired,
                      std::string* lastError,
                      std::mutex* errorMutex,
                      std::atomic_bool* stopEngine,
+                     std::atomic_int* requestedExitCode,
                      const std::string& logPath)
 {
   if (thread_.joinable())
@@ -103,6 +104,7 @@ bool TrayIcon::Start(std::atomic<RuntimeAudioMode>* desired,
   lastError_ = lastError;
   errorMutex_ = errorMutex;
   stopEngine_ = stopEngine;
+  requestedExitCode_ = requestedExitCode;
   logPath_ = logPath;
   stop_.store(false);
 
@@ -295,6 +297,9 @@ void TrayIcon::ShowContextMenu()
       OpenLog();
       break;
     case kMenuExit:
+      // Exit code 10 tells the Startup supervisor this was an intentional tray quit,
+      // so it must not immediately restart the engine.
+      if (requestedExitCode_) requestedExitCode_->store(10);
       if (stopEngine_) stopEngine_->store(true);
       break;
   }
