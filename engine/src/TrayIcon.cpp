@@ -139,7 +139,7 @@ void TrayIcon::AddIcon()
   nid.cbSize = sizeof(nid);
   nid.hWnd = hwnd_;
   nid.uID = kTrayId;
-  nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+  nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
   nid.uCallbackMessage = kTrayCallback;
 
   RuntimeAudioMode mode = current_ ? current_->load() : RuntimeAudioMode::Error;
@@ -192,7 +192,7 @@ void TrayIcon::UpdateIcon(bool force)
   nid.cbSize = sizeof(nid);
   nid.hWnd = hwnd_;
   nid.uID = kTrayId;
-  nid.uFlags = NIF_ICON | NIF_TIP;
+  nid.uFlags = NIF_ICON | NIF_TIP | NIF_SHOWTIP;
   nid.hIcon = IconForMode(mode);
   const std::wstring tip = TooltipForMode(mode);
   wcsncpy_s(nid.szTip, tip.c_str(), _TRUNCATE);
@@ -218,7 +218,8 @@ void TrayIcon::OpenLog()
     return;
 
   const std::wstring log = WidenUtf8(logPath_);
-  HINSTANCE rc = ShellExecuteW(nullptr, L"open", L"notepad.exe", log.c_str(), nullptr, SW_SHOWNORMAL);
+  const std::wstring args = L"\"" + log + L"\"";
+  HINSTANCE rc = ShellExecuteW(nullptr, L"open", L"notepad.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
   if (reinterpret_cast<INT_PTR>(rc) <= 32)
     std::fprintf(stderr, "[Tray] failed to open log\n");
 }
