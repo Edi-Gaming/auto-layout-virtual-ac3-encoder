@@ -1,14 +1,9 @@
-' Virtual AC3 Encoder autostart supervisor.
-' Runs the engine hidden and restarts it if it exits. Self-locating: it derives the engine
-' path from its own folder, so it works wherever the app is installed.
+' Virtual AC3 Encoder autostart launcher.
+' One-shot hidden launch. engine.exe itself is persistent and owns runtime SURROUND/GUITAR switching.
 Set fso = CreateObject("Scripting.FileSystemObject")
 base = fso.GetParentFolderName(WScript.ScriptFullName)
 appPath = base & "\engine.exe"
 logFile = base & "\engine.log"
 Set sh = CreateObject("WScript.Shell")
 q = Chr(34)
-Do
-  rc = sh.Run(q & appPath & q & " --hidden --log " & q & logFile & q, 0, True)
-  If rc = 10 Then Exit Do
-  WScript.Sleep 5000
-Loop
+sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False
