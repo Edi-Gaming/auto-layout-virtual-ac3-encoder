@@ -38,16 +38,16 @@ HICON IconForMode(RuntimeAudioMode mode)
   switch (mode)
   {
     case RuntimeAudioMode::Surround:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(OIC_INFORMATION));
+      return LoadIconW(nullptr, MAKEINTRESOURCEW(32516));
     case RuntimeAudioMode::Guitar:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(OIC_SAMPLE));
+      return LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
     case RuntimeAudioMode::Starting:
     case RuntimeAudioMode::Stopping:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(OIC_QUES));
+      return LoadIconW(nullptr, MAKEINTRESOURCEW(32514));
     case RuntimeAudioMode::Error:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(OIC_ERROR));
+      return LoadIconW(nullptr, MAKEINTRESOURCEW(32513));
   }
-  return LoadIconW(nullptr, MAKEINTRESOURCEW(OIC_SAMPLE));
+  return LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
 }
 
 std::wstring TooltipForMode(RuntimeAudioMode mode)
