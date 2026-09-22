@@ -76,7 +76,7 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - [x] **Working end-to-end (confirmed).** Because Secure Boot is ON here, the live system uses
       **VB-CABLE** as the 5.1 source: `engine --in "CABLE Output" --out "Realtek Digital Output"`
       → receiver decodes **Dolby Digital**. (Our own driver is ready for when Secure Boot is off.)
-- [x] **Phase 4 — day-to-day packaging/control.** Config + hidden autostart supervisor + native
+- [x] **Phase 4 — day-to-day packaging/control.** Config + one-shot hidden logon launcher + native
       Windows tray controller + persistent SURROUND/GUITAR runtime handoff.
 
 ## Components / engine flags
@@ -176,8 +176,9 @@ an **Audio mode switcher** Start Menu shortcut.
 ### Tray controller
 
 The persistent engine is intended to be used day to day from the Windows notification area.
-The tray icon follows the runtime state and its tooltip reports SURROUND, GUITAR, transition, or
-error status.
+The tray icon uses a compact crop of the actual holographic OHL emblem and its tooltip reports
+SURROUND, GUITAR, transition, or error status. The larger mode switcher uses the same OHL mark in
+its title bar and a dark, cleaner OHL-styled layout.
 
 Right-click the icon for:
 
@@ -195,17 +196,16 @@ Set `tray=0` in the config or pass `--no-tray` for headless operation.
 
 For the CI portable build, extract the artifact and double-click **`INSTALL-DAY-TO-DAY.cmd`**.
 It replaces the staged engine/DLLs, preserves an existing working config, enables tray control,
-refreshes the Startup supervisor, creates an Audio Mode Switcher Start Menu shortcut, and starts
-the new background engine. Tray **Exit engine** is an intentional stop: the supervisor recognizes
-the engine's dedicated exit code and does not immediately restart it; normal logon autostart
-remains installed.
+refreshes the one-shot Startup launcher, creates an Audio Mode Switcher Start Menu shortcut, and
+starts the new background engine directly. Tray **Exit engine** is a normal intentional stop; the
+engine stays stopped until manually launched again or the next Windows logon.
 
 
 ## Set and forget (autostart)
 
-Install the engine to a stable per-user location and have it start hidden at every logon, with
-restart-on-failure (no elevation, no Task Scheduler — a Startup-folder supervisor that runs in the
-real interactive session):
+Install the engine to a stable per-user location and have it start hidden at every logon
+(no elevation, no Task Scheduler — a one-shot Startup-folder launcher in the real interactive
+session):
 
 ```powershell
 scripts\setup-autostart.ps1                                   # VB-CABLE -> Realtek (defaults)
@@ -215,8 +215,8 @@ scripts\remove-autostart.ps1 [-DeleteInstall]                 # undo
 ```
 
 This stages `engine.exe` + DLLs to `%LOCALAPPDATA%\virtual-ac3-encoder`, writes
-`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and drops a supervisor in the
-Startup folder that runs `engine --hidden --log` and relaunches it if it exits.
+`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and drops a one-shot launcher in the Startup folder that starts `engine --hidden --log` once at
+logon. The persistent engine itself owns SURROUND/GUITAR mode changes.
 
 ## Build (engine)
 
