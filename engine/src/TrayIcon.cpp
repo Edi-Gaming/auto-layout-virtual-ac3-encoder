@@ -1,4 +1,5 @@
 #include "TrayIcon.h"
+#include "BrandIcon.h"
 
 #include <shellapi.h>
 #include <windowsx.h>
@@ -30,24 +31,9 @@ std::wstring WidenUtf8(const std::string& s)
   return out;
 }
 
-HICON IconForMode(RuntimeAudioMode mode)
+HICON IconForMode(RuntimeAudioMode)
 {
-  // Keep v1 extremely robust by using Windows-owned stock icons. The tray behavior is now
-  // day-to-day infrastructure; a branded OHL resource icon can replace these later without
-  // touching the control architecture.
-  switch (mode)
-  {
-    case RuntimeAudioMode::Surround:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(32516));
-    case RuntimeAudioMode::Guitar:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
-    case RuntimeAudioMode::Starting:
-    case RuntimeAudioMode::Stopping:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(32514));
-    case RuntimeAudioMode::Error:
-      return LoadIconW(nullptr, MAKEINTRESOURCEW(32513));
-  }
-  return LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
+  return GetOhlBrandIcon();
 }
 
 std::wstring TooltipForMode(RuntimeAudioMode mode)
