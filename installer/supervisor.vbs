@@ -8,6 +8,7 @@ logFile = base & "\engine.log"
 Set sh = CreateObject("WScript.Shell")
 q = Chr(34)
 Do
-  sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, True
+  rc = sh.Run(q & appPath & q & " --hidden --log " & q & logFile & q, 0, True)
+  If rc = 10 Then Exit Do
   WScript.Sleep 5000
 Loop
