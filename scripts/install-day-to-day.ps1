@@ -79,7 +79,8 @@ Set-Content -Path $supervisorPath -Encoding ASCII -Value @(
   "appPath = ""$exePath"""
   "logFile = ""$logPath"""
   'Do'
-  '  sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, True'
+  '  rc = sh.Run(q & appPath & q & " --hidden --log " & q & logFile & q, 0, True)'
+  '  If rc = 10 Then Exit Do'
   '  WScript.Sleep 5000'
   'Loop'
 )
