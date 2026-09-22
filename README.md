@@ -2,6 +2,14 @@
 
 [![CI](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml)
 
+> **This fork adds automatic AC3 2.0 / 5.1 payload switching.** A Windows 5.1 virtual
+> endpoint often reports six channels even when an app is actually stereo, which makes an AVR
+> believe it is receiving 5.1 and can lock out receiver-side stereo modes such as Dolby Pro Logic
+> II / A.F.D. With `layout=auto` (the default in this fork), the engine monitors the actual
+> C/LFE/surround PCM channels: stereo material is encoded as genuine AC3 2.0, and meaningful
+> non-front activity switches immediately to AC3 5.1. It waits for sustained non-front silence
+> before returning to 2.0 so quiet scenes do not flap the receiver between modes.
+>
 A Windows 10/11 software implementation of **"Dolby Digital Live"**: a virtual 5.1 audio
 device that accepts any multichannel PCM stream, encodes it to **AC3 (Dolby Digital)** in real
 time, and streams it as an **IEC 61937 / S-PDIF** bitstream out a chosen **Toslink optical**
@@ -80,12 +88,22 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - `--bitrate <bps>` (default 640000) / `--safe <frames>` (drift target, default 1536)
 - `--config <path>` (defaults to `virtual-ac3-encoder.conf` next to the exe) ·
   `--hidden` (hide console) · `--log <path>` (log to file) · `--duration <s>` (auto-stop)
-- `--upmix surround|off` — for stereo input, upmix to 5.1 via FFmpeg's `surround` filter
-  (a free DTS Neo:PC / Pro Logic II-style matrix upmix). **Default `surround`**; use `off` for
-  untouched stereo→front. Multichannel input is downmixed regardless.
+- `--upmix surround|off` — for fixed-5.1 operation, upmix a true <=2ch capture endpoint
+  to 5.1 via FFmpeg's `surround` filter. In automatic layout mode, stereo remains AC3 2.0 so
+  the AVR can perform its own stereo surround processing.
+- `--layout auto|5.1` — **default `auto` in this fork**. `auto` examines actual PCM activity
+  outside FL/FR and emits AC3 2.0 or 5.1 accordingly; `5.1` restores upstream fixed-5.1 behavior.
+- `--auto-threshold-db <dBFS>` — non-front peak threshold for 2.0→5.1 detection (default -60 dBFS).
+- `--auto-hold-ms <ms>` — non-front quiet time required before 5.1→2.0 (default 2000 ms).
+
+Auto-layout deliberately keeps two FFmpeg AC3 encoders alive at once, one stereo and one 5.1,
+while the IEC 61937 / S-PDIF carrier remains continuously open. The receiver therefore learns the
+active layout from each AC3 frame's own channel-mode metadata instead of from the Windows virtual
+endpoint's fixed six-channel format.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
-`bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`) < command-line flags.
+`bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
+`auto_hold_ms`) < command-line flags.
 
 ## Driver (Phase 3)
 
