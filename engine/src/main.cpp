@@ -18,6 +18,7 @@
 #include "DeviceEnum.h"
 #include "ModeControl.h"
 #include "RingBuffer.h"
+#include "TrayIcon.h"
 #include "WasapiCapture.h"
 #include "WasapiPassthrough.h"
 
@@ -66,7 +67,7 @@ static std::string Trim(const std::string& s)
 
 // Load a key=value config file (# or ; comments). CLI args override these.
 // Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
-//       layout, auto_threshold_db, auto_hold_ms.
+//       layout, auto_threshold_db, auto_hold_ms, tray.
 static void LoadConfigFile(const std::string& path, Config& c)
 {
   std::ifstream f(path);
@@ -93,6 +94,7 @@ static void LoadConfigFile(const std::string& path, Config& c)
     else if (k == "layout")            c.layout = v;
     else if (k == "auto_threshold_db") c.autoThresholdDb = std::strtod(v.c_str(), nullptr);
     else if (k == "auto_hold_ms")      c.autoHoldMs = (uint32_t)std::strtoul(v.c_str(), nullptr, 10);
+    else if (k == "tray")               c.tray = truthy(v);
   }
   std::printf("Loaded config: %s\n", path.c_str());
 }
@@ -111,6 +113,8 @@ static void ParseArgs(int argc, char** argv, Config& c)
     else if (a == "--probe")      c.probe = true;
     else if (a == "--loopback")   c.loopback = true;
     else if (a == "--mon")        c.monitor = true;
+    else if (a == "--tray")       c.tray = true;
+    else if (a == "--no-tray")    c.tray = false;
     else if (a == "--duration" && i + 1 < argc)
       c.durationSeconds = (int)std::strtol(argv[++i], nullptr, 10);
     else if (a == "--in")         c.inName = next();
@@ -365,6 +369,7 @@ int main(int argc, char** argv)
   HandleControllerCommandLine(argc, argv);
 
   // Pre-scan for --log / --hidden so they apply before any output or device work.
+  std::string logPath;
   for (int i = 1; i < argc; ++i)
   {
     std::string a = argv[i];
@@ -375,9 +380,10 @@ int main(int argc, char** argv)
     }
     else if (a == "--log" && i + 1 < argc)
     {
-      FILE* fp = std::freopen(argv[i + 1], "a", stdout);
+      logPath = argv[i + 1];
+      FILE* fp = std::freopen(logPath.c_str(), "a", stdout);
       (void)fp;
-      std::freopen(argv[i + 1], "a", stderr);
+      std::freopen(logPath.c_str(), "a", stderr);
     }
   }
   setvbuf(stdout, nullptr, _IONBF, 0);
@@ -477,6 +483,17 @@ int main(int argc, char** argv)
 
   std::printf("[ModeControl] ready: engine.exe --switcher | --mode surround|guitar|status\n");
 
+  TrayIcon tray;
+  if (cfg.tray)
+  {
+    if (!tray.Start(&desired, &current, &lastError, &errorMutex, &g_stop, logPath))
+      std::fprintf(stderr, "[Tray] failed to start; engine will continue without tray UI\n");
+  }
+  else
+  {
+    std::printf("[Tray] disabled\n");
+  }
+
   std::unique_ptr<RunningPipeline> pipeline;
   auto nextRetry = std::chrono::steady_clock::now();
 
@@ -547,6 +564,7 @@ int main(int argc, char** argv)
 
   std::printf("\nStopping...\n");
   current.store(RuntimeAudioMode::Stopping);
+  tray.Stop();
   pipeline.reset();
   control.Stop();
   CloseHandle(singleton);
