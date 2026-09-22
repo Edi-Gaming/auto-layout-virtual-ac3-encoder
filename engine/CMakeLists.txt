@@ -75,12 +75,14 @@ add_executable(engine
   src/Guids.cpp
   src/DeviceEnum.cpp
   src/DeviceEnum.h
+  src/ModeControl.cpp
+  src/ModeControl.h
   src/WasapiCapture.cpp
   src/WasapiCapture.h
   src/WasapiPassthrough.cpp
   src/WasapiPassthrough.h
 )
-target_link_libraries(engine PRIVATE ac3core ffmpeg ole32 avrt)
+target_link_libraries(engine PRIVATE ac3core ffmpeg ole32 avrt user32 gdi32)
 if(MSVC)
   target_compile_options(engine PRIVATE /permissive-)
 endif()
