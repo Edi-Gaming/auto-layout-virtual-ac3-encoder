@@ -2,6 +2,7 @@
 
 #include "ModeControl.h"
 
+#include <windows.h>
 #include <atomic>
 #include <mutex>
 #include <string>
