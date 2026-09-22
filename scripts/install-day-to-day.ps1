@@ -2,22 +2,62 @@
 # No admin rights required. Existing virtual-ac3-encoder.conf is preserved.
 [CmdletBinding()]
 param(
-  [string]$SourceDir = $PSScriptRoot,
-  [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'virtual-ac3-encoder')
+  [string]$SourceDir = '',
+  [string]$InstallDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Resolve paths defensively. Some Windows/PowerShell installations can return an empty string
+# from Environment.GetFolderPath for Start Menu folders, and Join-Path refuses an empty -Path.
+if ([string]::IsNullOrWhiteSpace($SourceDir)) {
+  $SourceDir = $PSScriptRoot
+}
+if ([string]::IsNullOrWhiteSpace($SourceDir)) {
+  $SourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($SourceDir)) {
+  throw 'Could not determine the extracted build folder.'
+}
+
+$localAppData = $env:LOCALAPPDATA
+if ([string]::IsNullOrWhiteSpace($localAppData)) {
+  $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+}
+if ([string]::IsNullOrWhiteSpace($localAppData)) {
+  throw 'Could not resolve LOCALAPPDATA.'
+}
+
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+  $InstallDir = Join-Path $localAppData 'virtual-ac3-encoder'
+}
+
+$roamingAppData = $env:APPDATA
+if ([string]::IsNullOrWhiteSpace($roamingAppData)) {
+  $roamingAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+}
+if ([string]::IsNullOrWhiteSpace($roamingAppData)) {
+  throw 'Could not resolve APPDATA.'
+}
+
+$startMenuRoot = Join-Path $roamingAppData 'Microsoft\Windows\Start Menu'
+$programsDir = Join-Path $startMenuRoot 'Programs'
+$startup = Join-Path $programsDir 'Startup'
 
 $engineSrc = Join-Path $SourceDir 'engine.exe'
 if (-not (Test-Path $engineSrc)) {
   throw "engine.exe not found next to this script: $engineSrc"
 }
 
-$startup = [Environment]::GetFolderPath('Startup')
 $supervisorPath = Join-Path $startup 'VirtualAc3Encoder.vbs'
-$startMenuDir = Join-Path ([Environment]::GetFolderPath('Programs')) 'OHL Virtual AC3 Encoder'
+$startMenuDir = Join-Path $programsDir 'OHL Virtual AC3 Encoder'
 $shortcutPath = Join-Path $startMenuDir 'Audio Mode Switcher.lnk'
 
+Write-Host "Source folder     -> $SourceDir"
+Write-Host "Install folder    -> $InstallDir"
+Write-Host "Startup folder    -> $startup"
+Write-Host "Start Menu folder -> $programsDir"
+Write-Host ''
 Write-Host 'Stopping current OHL / virtual-ac3-encoder processes...'
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object {
@@ -72,6 +112,7 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
 $exePath = Join-Path $InstallDir 'engine.exe'
 $logPath = Join-Path $InstallDir 'engine.log'
 
+New-Item -ItemType Directory -Force -Path $startup | Out-Null
 Set-Content -Path $supervisorPath -Encoding ASCII -Value @(
   "' OHL Virtual AC3 Encoder supervisor."
   'Set sh = CreateObject("WScript.Shell")'
