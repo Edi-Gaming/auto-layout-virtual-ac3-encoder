@@ -470,6 +470,7 @@ int main(int argc, char** argv)
 
   std::atomic<RuntimeAudioMode> desired{RuntimeAudioMode::Surround};
   std::atomic<RuntimeAudioMode> current{RuntimeAudioMode::Starting};
+  std::atomic_int requestedExitCode{0};
   std::string lastError;
   std::mutex errorMutex;
 
@@ -486,7 +487,7 @@ int main(int argc, char** argv)
   TrayIcon tray;
   if (cfg.tray)
   {
-    if (!tray.Start(&desired, &current, &lastError, &errorMutex, &g_stop, logPath))
+    if (!tray.Start(&desired, &current, &lastError, &errorMutex, &g_stop, &requestedExitCode, logPath))
       std::fprintf(stderr, "[Tray] failed to start; engine will continue without tray UI\n");
   }
   else
@@ -568,5 +569,5 @@ int main(int argc, char** argv)
   pipeline.reset();
   control.Stop();
   CloseHandle(singleton);
-  return 0;
+  return requestedExitCode.load();
 }
