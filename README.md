@@ -9,6 +9,7 @@
 > C/LFE/surround PCM channels: stereo material is encoded as genuine AC3 2.0, and meaningful
 > non-front activity switches immediately to AC3 5.1. It waits for sustained non-front silence
 > before returning to 2.0 so quiet scenes do not flap the receiver between modes.
+> Windows CI on this fork builds the engine and runs the encoder/unit-test suite for each PR.
 >
 A Windows 10/11 software implementation of **"Dolby Digital Live"**: a virtual 5.1 audio
 device that accepts any multichannel PCM stream, encodes it to **AC3 (Dolby Digital)** in real
