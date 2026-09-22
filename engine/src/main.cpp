@@ -383,26 +383,10 @@ int main(int argc, char** argv)
   setvbuf(stdout, nullptr, _IONBF, 0);
   std::printf("virtual-ac3-encoder %s\n", VAC3_VERSION);
 
-  // Keep exactly one persistent background engine. The switcher and --mode invocations return
-  // above before creating this mutex, so they can coexist with the daemon.
-  HANDLE singleton = CreateMutexW(nullptr, FALSE, L"Local\\VirtualAc3EncoderEngineV1");
-  if (!singleton)
-  {
-    std::fprintf(stderr, "failed to create engine singleton mutex\n");
-    return 1;
-  }
-  if (GetLastError() == ERROR_ALREADY_EXISTS)
-  {
-    std::fprintf(stderr, "another virtual-ac3-encoder engine is already running\n");
-    CloseHandle(singleton);
-    return 4;
-  }
-
   ComApartment com;
   if (!com.ok())
   {
     std::fprintf(stderr, "CoInitializeEx failed\n");
-    CloseHandle(singleton);
     return 1;
   }
 
@@ -417,7 +401,6 @@ int main(int argc, char** argv)
   if (cfg.layout != "auto" && cfg.layout != "5.1")
   {
     std::fprintf(stderr, "invalid layout \"%s\"; expected auto or 5.1\n", cfg.layout.c_str());
-    CloseHandle(singleton);
     return 1;
   }
 
@@ -427,7 +410,6 @@ int main(int argc, char** argv)
     DeviceEnum::Print(DeviceEnum::List(eRender));
     std::printf("\nCapture (input) endpoints:\n");
     DeviceEnum::Print(DeviceEnum::List(eCapture));
-    CloseHandle(singleton);
     return 0;
   }
 
@@ -444,7 +426,6 @@ int main(int argc, char** argv)
       std::printf("  %-48s %s  AC3@48k:%s  AC3@44.1k:%s\n", Narrow(e.name.c_str()).c_str(),
                   e.isSpdif ? "[SPDIF]" : "       ", ok48 ? "YES" : "no ", ok44 ? "YES" : "no ");
     }
-    CloseHandle(singleton);
     return 0;
   }
 
@@ -455,15 +436,25 @@ int main(int argc, char** argv)
     ComPtr<IMMDevice> inDev;
     EndpointInfo inInfo;
     if (!ResolveCapture(cfg, inDev, inInfo))
-    {
-      CloseHandle(singleton);
       return 1;
-    }
     std::printf("Input   : %s %s\n", Narrow(inInfo.name.c_str()).c_str(),
                 cfg.loopback ? "(loopback)" : "(capture)");
-    int rc = RunMonitor(cfg, inDev.Get());
+    return RunMonitor(cfg, inDev.Get());
+  }
+
+  // Keep exactly one persistent background engine. The switcher and --mode invocations return
+  // above before creating this mutex, so they can coexist with the daemon.
+  HANDLE singleton = CreateMutexW(nullptr, FALSE, L"Local\\VirtualAc3EncoderEngineV1");
+  if (!singleton)
+  {
+    std::fprintf(stderr, "failed to create engine singleton mutex\n");
+    return 1;
+  }
+  if (GetLastError() == ERROR_ALREADY_EXISTS)
+  {
+    std::fprintf(stderr, "another virtual-ac3-encoder engine is already running\n");
     CloseHandle(singleton);
-    return rc;
+    return 4;
   }
 
   std::atomic<RuntimeAudioMode> desired{RuntimeAudioMode::Surround};
