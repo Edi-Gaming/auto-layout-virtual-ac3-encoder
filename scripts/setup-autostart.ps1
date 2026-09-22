@@ -53,6 +53,7 @@ Set-Content -Path (Join-Path $InstallDir 'virtual-ac3-encoder.conf') -Encoding U
   "out=$Out"
   "bitrate=$Bitrate"
   "loopback=$([int][bool]$Loopback)"
+  "tray=1"
 )
 Write-Host "Wrote config (in='$In', out='$Out', bitrate=$Bitrate, loopback=$([bool]$Loopback))"
 
