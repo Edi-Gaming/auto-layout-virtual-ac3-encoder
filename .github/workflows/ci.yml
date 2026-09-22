@@ -36,3 +36,18 @@ jobs:
         run: ctest --test-dir engine/build -C Release --output-on-failure
         # The doctest suite already encodes PCM -> AC3 and checks the IEC 61937 burst,
         # so the engine/encoder path is covered without needing a system ffmpeg here.
+
+      - name: Assemble test build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-test | Out-Null
+          Copy-Item engine/build/Release/engine.exe dist-test/
+          Copy-Item engine/build/Release/*.dll dist-test/
+          Copy-Item installer/default.conf dist-test/virtual-ac3-encoder.conf
+
+      - name: Upload test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtual-ac3-encoder-auto-layout-test
+          path: dist-test
+          if-no-files-found: error
