@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   "Set and forget": installs the engine to a stable per-user location, writes a config file,
-  and autostarts it hidden at logon via a Startup-folder supervisor (restarts it if it exits).
+  and autostarts it hidden at logon via a one-shot Startup-folder launcher.
 
   Uses the Startup folder (not Task Scheduler): it runs in the real interactive logon session
   where WASAPI + a hidden console work, and needs NO elevation.
@@ -57,29 +57,26 @@ Set-Content -Path (Join-Path $InstallDir 'virtual-ac3-encoder.conf') -Encoding U
 )
 Write-Host "Wrote config (in='$In', out='$Out', bitrate=$Bitrate, loopback=$([bool]$Loopback))"
 
-# 3. Supervisor VBScript in the Startup folder: runs the engine hidden and restarts it on exit.
-#    The engine hides its own console (--hidden) and writes its own log (--log).
+# 3. One-shot VBScript in the Startup folder: starts the persistent engine hidden at logon.
+#    Runtime SURROUND/GUITAR switching happens inside engine.exe; no external watchdog is needed.
 $startup = [Environment]::GetFolderPath('Startup')
 $vbsPath = Join-Path $startup 'VirtualAc3Encoder.vbs'
 Set-Content -Path $vbsPath -Encoding ASCII -Value @(
-  "' Virtual AC3 Encoder autostart supervisor (runs hidden; restarts the engine if it exits)."
+  "' Virtual AC3 Encoder autostart launcher."
   'Set sh = CreateObject("WScript.Shell")'
   'q = Chr(34)'
   "appPath = ""$exePath"""
   "logFile = ""$logPath"""
-  'Do'
-  '  rc = sh.Run(q & appPath & q & " --hidden --log " & q & logFile & q, 0, True)'
-  '  If rc = 10 Then Exit Do'
-  '  WScript.Sleep 5000'
-  'Loop'
+  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
 )
-Write-Host "Installed Startup supervisor -> $vbsPath"
+Write-Host "Installed Startup launcher -> $vbsPath"
 
 # 4. Start it now (don't wait for the next logon).
 Get-CimInstance Win32_Process -Filter "Name='engine.exe'" |
   Where-Object { $_.CommandLine -like "*virtual-ac3-encoder*" } |
   ForEach-Object { $_ | Invoke-CimMethod -MethodName Terminate | Out-Null }
-Start-Process wscript -ArgumentList "`"$vbsPath`""
+$daemonArgs = '--hidden --log "' + $logPath + '"'
+Start-Process -FilePath $exePath -ArgumentList $daemonArgs -WorkingDirectory $InstallDir -WindowStyle Hidden
 Start-Sleep -Seconds 3
 $running = [bool](Get-CimInstance Win32_Process -Filter "Name='engine.exe'")
 Write-Host "Started. engine running: $running"
