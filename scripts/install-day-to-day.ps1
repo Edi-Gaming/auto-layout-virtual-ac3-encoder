@@ -114,16 +114,12 @@ $logPath = Join-Path $InstallDir 'engine.log'
 
 New-Item -ItemType Directory -Force -Path $startup | Out-Null
 Set-Content -Path $supervisorPath -Encoding ASCII -Value @(
-  "' OHL Virtual AC3 Encoder supervisor."
+  "' OHL Virtual AC3 Encoder startup launcher."
   'Set sh = CreateObject("WScript.Shell")'
   'q = Chr(34)'
   "appPath = ""$exePath"""
   "logFile = ""$logPath"""
-  'Do'
-  '  rc = sh.Run(q & appPath & q & " --hidden --log " & q & logFile & q, 0, True)'
-  '  If rc = 10 Then Exit Do'
-  '  WScript.Sleep 5000'
-  'Loop'
+  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
 )
 
 New-Item -ItemType Directory -Force -Path $startMenuDir | Out-Null
@@ -151,23 +147,32 @@ if ($preflight.ExitCode -ne 0) {
 }
 
 Write-Host 'Preflight passed.'
-Write-Host 'Starting background engine...'
+Write-Host 'Starting background engine directly...'
 
-Start-Process -FilePath "$env:WINDIR\System32\wscript.exe" -ArgumentList ('"' + $supervisorPath + '"') -WindowStyle Hidden
+# Launch the real daemon directly. The Startup VBS is now only a one-shot logon launcher,
+# so installation no longer depends on WScript successfully supervising the process.
+$daemonArgs = '--hidden --log "' + $logPath + '"'
+$daemon = Start-Process -FilePath $exePath -ArgumentList $daemonArgs -WorkingDirectory $InstallDir -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 2
+
+if ($daemon.HasExited) {
+  $exitCode = $daemon.ExitCode
+  $hex = ('0x{0:X8}' -f ([uint32]$exitCode))
+  if (Test-Path $logPath) {
+    Write-Host ''
+    Write-Host '----- engine.log -----'
+    Get-Content $logPath -Tail 120 | ForEach-Object { Write-Host $_ }
+    Write-Host '----------------------'
+    throw "engine.exe exited during daemon startup. Exit code: $exitCode ($hex). The last engine.log lines are above."
+  }
+  throw "engine.exe exited during daemon startup with exit code $exitCode ($hex), and no engine.log was created."
+}
 
 $running = @(Get-CimInstance Win32_Process -Filter "Name='engine.exe'" -ErrorAction SilentlyContinue |
   Where-Object { $_.ExecutablePath -like "$InstallDir*" }).Count -gt 0
 
 if (-not $running) {
-  if (Test-Path $logPath) {
-    Write-Host ''
-    Write-Host '----- engine.log -----'
-    Get-Content $logPath -Tail 80 | ForEach-Object { Write-Host $_ }
-    Write-Host '----------------------'
-    throw "engine.exe started but did not stay running. The last engine.log lines are above."
-  }
-  throw "engine.exe did not stay running and no engine.log was created. The process likely failed before main() or the supervisor could not launch it."
+  throw "engine.exe was launched but could not be found in the process table after 2 seconds."
 }
 
 Write-Host ''
