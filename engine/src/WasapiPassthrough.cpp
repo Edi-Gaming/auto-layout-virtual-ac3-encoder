@@ -294,7 +294,8 @@ SpdifEncoder& WasapiPassthrough::SelectEncoder(const uint8_t* in, bool haveRealI
       if (!activeIsSurround_)
       {
         activeIsSurround_ = true;
-        std::printf("[AutoLayout] 2.0 -> 5.1 (non-front peak %.1f dBFS)\n", PeakDb(peak));
+        std::fprintf(stderr, "[AutoLayout] 2.0 -> 5.1 (non-front peak %.1f dBFS)\n", PeakDb(peak));
+        std::fflush(stderr);
       }
     }
     else if (activeIsSurround_)
@@ -303,8 +304,9 @@ SpdifEncoder& WasapiPassthrough::SelectEncoder(const uint8_t* in, bool haveRealI
       {
         activeIsSurround_ = false;
         quietPackets_ = 0;
-        std::printf("[AutoLayout] 5.1 -> 2.0 (non-front channels quiet for %u ms)\n",
-                    params_.autoHoldMs);
+        std::fprintf(stderr, "[AutoLayout] 5.1 -> 2.0 (non-front channels quiet for %u ms)\n",
+                     params_.autoHoldMs);
+        std::fflush(stderr);
       }
     }
   }
