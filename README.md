@@ -76,7 +76,8 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - [x] **Working end-to-end (confirmed).** Because Secure Boot is ON here, the live system uses
       **VB-CABLE** as the 5.1 source: `engine --in "CABLE Output" --out "Realtek Digital Output"`
       → receiver decodes **Dolby Digital**. (Our own driver is ready for when Secure Boot is off.)
-- [ ] **Phase 4 — packaging** (config file + auto-start at logon; optional tray UI).
+- [x] **Phase 4 — day-to-day packaging/control.** Config + hidden autostart supervisor + native
+      Windows tray controller + persistent SURROUND/GUITAR runtime handoff.
 
 ## Components / engine flags
 
@@ -84,6 +85,8 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - `--list` — list render + capture endpoints.
 - `--probe` — which outputs accept AC3 passthrough (IsFormatSupported, non-intrusive).
 - `--mon` — capture-only throughput diagnostic (non-intrusive).
+- `--tray` / `--no-tray` — enable/disable the persistent Windows notification-area controller
+  (enabled by default).
 - `--loopback` — treat `--in` as a *render* endpoint and capture it via WASAPI loopback
   (used with the virtual driver).
 - `--in <name>` / `--in-id <id>` / `--out <name>` / `--out-id <id>` / `--out-spdif`
@@ -105,7 +108,7 @@ endpoint's fixed six-channel format.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
 `bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
-`auto_hold_ms`) < command-line flags.
+`auto_hold_ms`, `tray`) < command-line flags.
 
 ## Driver (Phase 3)
 
@@ -169,6 +172,26 @@ retries every two seconds.
 When the hidden background engine is already running, double-clicking `engine.exe` with no
 arguments opens the mode switcher instead of starting a duplicate engine. The installer also adds
 an **Audio mode switcher** Start Menu shortcut.
+
+### Tray controller
+
+The persistent engine is intended to be used day to day from the Windows notification area.
+The tray icon follows the runtime state and its tooltip reports SURROUND, GUITAR, transition, or
+error status.
+
+Right-click the icon for:
+
+- **Surround mode** — reacquire VB-CABLE + exclusive AC3 S/PDIF.
+- **Guitar / low-latency mode** — release S/PDIF for ASIO4ALL / AmpliTube.
+- **Open mode switcher...** — open the larger two-button controller.
+- **Open engine log** — available when the daemon was launched with `--log`.
+- **Exit engine** — cleanly stop the persistent daemon.
+
+Double-click the tray icon to open the larger mode switcher. The tray icon survives normal mode
+changes because the engine process itself never exits. Explorer/taskbar restarts are detected and
+the icon is re-added automatically.
+
+Set `tray=0` in the config or pass `--no-tray` for headless operation.
 
 
 ## Set and forget (autostart)
