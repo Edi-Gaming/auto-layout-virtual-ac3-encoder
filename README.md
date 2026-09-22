@@ -1,6 +1,6 @@
 # virtual-ac3-encoder
 
-[![CI](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml)
+[![CI](https://github.com/Edi-Gaming/auto-layout-virtual-ac3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Edi-Gaming/auto-layout-virtual-ac3-encoder/actions/workflows/ci.yml)
 
 > **This fork adds automatic AC3 2.0 / 5.1 payload switching.** A Windows 5.1 virtual
 > endpoint often reports six channels even when an app is actually stereo, which makes an AVR
