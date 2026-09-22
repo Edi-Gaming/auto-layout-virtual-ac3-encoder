@@ -1,4 +1,5 @@
 #include "ModeControl.h"
+#include "BrandIcon.h"
 
 #include <windows.h>
 
@@ -15,6 +16,13 @@ constexpr int kIdSurround = 1001;
 constexpr int kIdGuitar = 1002;
 constexpr int kIdStatus = 1003;
 constexpr int kIdHint = 1004;
+constexpr int kIdTitle = 1005;
+constexpr int kIdSubtitle = 1006;
+
+HBRUSH gBackgroundBrush = nullptr;
+HFONT gTitleFont = nullptr;
+HFONT gUiFont = nullptr;
+HFONT gButtonFont = nullptr;
 constexpr UINT_PTR kStatusTimer = 1;
 
 std::wstring WidenUtf8(const std::string& s)
@@ -22,7 +30,7 @@ std::wstring WidenUtf8(const std::string& s)
   if (s.empty()) return {};
   int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
   if (n <= 0) return {};
-  std::wstring out(static_cast<size_t>(n), L'\\0');
+  std::wstring out(static_cast<size_t>(n), L'\0');
   MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), out.data(), n);
   return out;
 }
@@ -66,7 +74,7 @@ void RequestMode(HWND hwnd, const char* mode)
   {
     SetStatus(hwnd, "offline");
     MessageBoxW(hwnd,
-                L"The background virtual-ac3-encoder engine is not reachable.\\n\\n"
+                L"The background virtual-ac3-encoder engine is not reachable.\n\n"
                 L"Start the installed engine, then try again.",
                 L"OHL Audio Mode",
                 MB_OK | MB_ICONERROR);
@@ -81,53 +89,74 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   {
     case WM_CREATE:
     {
-      HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+      gTitleFont = CreateFontW(-27, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                               CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+      gUiFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+      gButtonFont = CreateFontW(-18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
-      HWND title = CreateWindowW(L"STATIC", L"OHL  AUDIO MODE",
+      HWND title = CreateWindowW(L"STATIC", L"OHL  |  AUDIO MODE",
                                  WS_CHILD | WS_VISIBLE,
-                                 22, 18, 500, 28,
-                                 hwnd, nullptr, nullptr, nullptr);
-      SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+                                 22, 17, 520, 34,
+                                 hwnd, reinterpret_cast<HMENU>(kIdTitle), nullptr, nullptr);
+      SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
 
       HWND sub = CreateWindowW(L"STATIC",
-                               L"Sony STR-K900 surround  <->  low-latency guitar",
+                               L"Optical High-Fidelity Link  |  Sony STR-K900",
                                WS_CHILD | WS_VISIBLE,
-                               22, 47, 500, 24,
-                               hwnd, nullptr, nullptr, nullptr);
-      SendMessageW(sub, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+                               23, 52, 520, 23,
+                               hwnd, reinterpret_cast<HMENU>(kIdSubtitle), nullptr, nullptr);
+      SendMessageW(sub, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
       HWND status = CreateWindowW(L"STATIC", L"Checking engine...",
                                   WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE | WS_BORDER,
-                                  22, 80, 500, 44,
+                                  22, 84, 520, 44,
                                   hwnd, reinterpret_cast<HMENU>(kIdStatus), nullptr, nullptr);
-      SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+      SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
       HWND surround = CreateWindowW(L"BUTTON",
-                                    L"SURROUND\\r\\nVB-CABLE -> AC-3 -> S/PDIF",
+                                    L"SURROUND\r\nVB-CABLE  >  AC-3  >  S/PDIF",
                                     WS_CHILD | WS_VISIBLE | BS_MULTILINE | BS_PUSHBUTTON,
-                                    22, 144, 240, 82,
+                                    22, 146, 250, 82,
                                     hwnd, reinterpret_cast<HMENU>(kIdSurround), nullptr, nullptr);
-      SendMessageW(surround, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+      SendMessageW(surround, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
 
       HWND guitar = CreateWindowW(L"BUTTON",
-                                  L"GUITAR\\r\\nASIO4ALL -> direct S/PDIF",
+                                  L"GUITAR\r\nASIO4ALL  >  direct S/PDIF",
                                   WS_CHILD | WS_VISIBLE | BS_MULTILINE | BS_PUSHBUTTON,
-                                  282, 144, 240, 82,
+                                  292, 146, 250, 82,
                                   hwnd, reinterpret_cast<HMENU>(kIdGuitar), nullptr, nullptr);
-      SendMessageW(guitar, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+      SendMessageW(guitar, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
 
       HWND hint = CreateWindowW(
           L"STATIC",
-          L"Guitar mode keeps engine.exe alive but destroys the WASAPI capture/output pipeline, "
-          L"fully releasing the optical endpoint. Surround mode rebuilds and reacquires it.",
+          L"Surround owns optical for AC-3. Guitar releases S/PDIF for ASIO4ALL; "
+          L"the engine itself stays running.",
           WS_CHILD | WS_VISIBLE,
-          22, 247, 500, 54,
+          22, 246, 520, 48,
           hwnd, reinterpret_cast<HMENU>(kIdHint), nullptr, nullptr);
-      SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+      SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
       SetTimer(hwnd, kStatusTimer, 750, nullptr);
       RefreshStatus(hwnd);
       return 0;
+    }
+
+    case WM_CTLCOLORSTATIC:
+    {
+      HDC dc = reinterpret_cast<HDC>(wp);
+      HWND control = reinterpret_cast<HWND>(lp);
+      const int id = GetDlgCtrlID(control);
+      SetBkMode(dc, TRANSPARENT);
+      if (id == kIdSubtitle || id == kIdHint)
+        SetTextColor(dc, RGB(160, 170, 188));
+      else
+        SetTextColor(dc, RGB(238, 242, 250));
+      return reinterpret_cast<LRESULT>(gBackgroundBrush);
     }
 
     case WM_COMMAND:
@@ -148,6 +177,10 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_DESTROY:
       KillTimer(hwnd, kStatusTimer);
+      if (gTitleFont) { DeleteObject(gTitleFont); gTitleFont = nullptr; }
+      if (gUiFont) { DeleteObject(gUiFont); gUiFont = nullptr; }
+      if (gButtonFont) { DeleteObject(gButtonFont); gButtonFont = nullptr; }
+      if (gBackgroundBrush) { DeleteObject(gBackgroundBrush); gBackgroundBrush = nullptr; }
       PostQuitMessage(0);
       return 0;
   }
@@ -265,7 +298,7 @@ void ModeControlServer::ThreadProc()
 
     if (pipe == INVALID_HANDLE_VALUE)
     {
-      std::fprintf(stderr, "[ModeControl] CreateNamedPipe failed: %lu\\n", GetLastError());
+      std::fprintf(stderr, "[ModeControl] CreateNamedPipe failed: %lu\n", GetLastError());
       return;
     }
 
@@ -343,7 +376,10 @@ int RunModeSwitcherGui()
   wc.hInstance = instance;
   wc.lpszClassName = kWindowClass;
   wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-  wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+  wc.hIcon = GetOhlBrandIcon();
+  wc.hIconSm = GetOhlBrandIcon();
+  gBackgroundBrush = CreateSolidBrush(RGB(15, 17, 23));
+  wc.hbrBackground = gBackgroundBrush;
 
   RegisterClassW(&wc);
 
@@ -354,8 +390,8 @@ int RunModeSwitcherGui()
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
       CW_USEDEFAULT,
       CW_USEDEFAULT,
-      560,
-      350,
+      580,
+      340,
       nullptr,
       nullptr,
       instance,
