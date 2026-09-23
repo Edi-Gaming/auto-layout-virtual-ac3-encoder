@@ -189,6 +189,13 @@ $startupShortcut.Description = 'OHL Virtual AC3 Encoder - day-to-day engine'
 $startupShortcut.IconLocation = $exePath + ',0'
 $startupShortcut.Save()
 
+# Verify the authoritative startup entry points at the exact engine we just installed.
+$startupCheck = $ws.CreateShortcut($ohlStartupLnk)
+if (-not [string]::Equals($startupCheck.TargetPath, $exePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw "Startup shortcut verification failed. Expected '$exePath', got '$($startupCheck.TargetPath)'."
+}
+Write-Host "  startup target verified: $($startupCheck.TargetPath)"
+
 $shortcut = $ws.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $exePath
 $shortcut.Arguments = '--switcher'
@@ -215,8 +222,8 @@ if ($preflight.ExitCode -ne 0) {
 Write-Host 'Preflight passed.'
 Write-Host 'Starting background engine directly...'
 
-# Launch the real daemon directly. The Startup VBS is now only a one-shot logon launcher,
-# so installation no longer depends on WScript successfully supervising the process.
+# Launch the real daemon directly. Logon autostart uses the OHL Startup shortcut created above;
+# there is no WScript supervisor in the day-to-day path anymore.
 $daemonArgs = '--hidden --log "' + $logPath + '"'
 $daemon = Start-Process -FilePath $exePath -ArgumentList $daemonArgs -WorkingDirectory $InstallDir -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 2
