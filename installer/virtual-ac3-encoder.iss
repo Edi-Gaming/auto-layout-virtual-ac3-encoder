@@ -15,7 +15,7 @@ AppPublisher=strepto42
 AppPublisherURL=https://github.com/strepto42/virtual-ac3-encoder
 AppSupportURL=https://github.com/strepto42/virtual-ac3-encoder/issues
 DefaultDirName={localappdata}\Virtual AC3 Encoder
-DefaultGroupName=Virtual AC3 Encoder
+DefaultGroupName=OHL Virtual AC3 Encoder
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
 WizardStyle=modern
@@ -56,7 +56,7 @@ Filename: "{sys}\wscript.exe"; Parameters: """{app}\supervisor.vbs"""; WorkingDi
 Filename: "{app}\QUICKSTART.txt"; Description: "Open the quick start (VB-CABLE setup)"; Flags: postinstall shellexec skipifsilent
 
 [UninstallRun]
-; Stop the running engine + supervisor before files are removed.
+; Stop the running engine before files are removed.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\stop-engine.ps1"""; Flags: runhidden; RunOnceId: "StopEngine"
 
 [UninstallDelete]
