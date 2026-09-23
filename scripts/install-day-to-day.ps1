@@ -44,12 +44,18 @@ $startMenuRoot = Join-Path $roamingAppData 'Microsoft\Windows\Start Menu'
 $programsDir = Join-Path $startMenuRoot 'Programs'
 $startup = Join-Path $programsDir 'Startup'
 
+# Known legacy install/startup locations from the original upstream installer and older OHL
+# development builds. The day-to-day installer migrates these to one authoritative startup entry.
+$legacyInstallDir = Join-Path $localAppData 'Virtual AC3 Encoder'
+$legacyStartupVbs = Join-Path $startup 'VirtualAc3Encoder.vbs'
+$legacyStartupLnk = Join-Path $startup 'Virtual AC3 Encoder.lnk'
+$ohlStartupLnk = Join-Path $startup 'OHL Virtual AC3 Encoder.lnk'
+
 $engineSrc = Join-Path $SourceDir 'engine.exe'
 if (-not (Test-Path $engineSrc)) {
   throw "engine.exe not found next to this script: $engineSrc"
 }
 
-$supervisorPath = Join-Path $startup 'VirtualAc3Encoder.vbs'
 $startMenuDir = Join-Path $programsDir 'OHL Virtual AC3 Encoder'
 $shortcutPath = Join-Path $startMenuDir 'Audio Mode Switcher.lnk'
 
@@ -58,23 +64,80 @@ Write-Host "Install folder    -> $InstallDir"
 Write-Host "Startup folder    -> $startup"
 Write-Host "Start Menu folder -> $programsDir"
 Write-Host ''
-Write-Host 'Stopping current OHL / virtual-ac3-encoder processes...'
+Write-Host 'Migrating legacy autostart and stopping old encoder processes...'
+
+$knownRoots = @($InstallDir, $legacyInstallDir) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object {
-    ($_.Name -ieq 'engine.exe' -and (
-      $_.ExecutablePath -like "$InstallDir*" -or
-      $_.CommandLine -like '*virtual-ac3-encoder*'
-    )) -or
-    ($_.Name -ieq 'wscript.exe' -and (
-      $_.CommandLine -like '*VirtualAc3Encoder*' -or
-      $_.CommandLine -like '*virtual-ac3-encoder*'
-    ))
+    $p = $_
+    $knownEngine = $false
+    if ($p.Name -ieq 'engine.exe') {
+      foreach ($root in $knownRoots) {
+        if ($p.ExecutablePath -and $p.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+          $knownEngine = $true
+          break
+        }
+      }
+      if (-not $knownEngine -and $p.CommandLine) {
+        $knownEngine = (
+          $p.CommandLine -like '*virtual-ac3-encoder*' -or
+          $p.CommandLine -like '*Virtual AC3 Encoder*'
+        )
+      }
+    }
+
+    $knownWscript = (
+      $p.Name -ieq 'wscript.exe' -and $p.CommandLine -and (
+        $p.CommandLine -like '*VirtualAc3Encoder*' -or
+        $p.CommandLine -like '*Virtual AC3 Encoder*' -or
+        $p.CommandLine -like '*virtual-ac3-encoder*'
+      )
+    )
+
+    $knownEngine -or $knownWscript
   } |
   ForEach-Object {
-    try { $_ | Invoke-CimMethod -MethodName Terminate | Out-Null } catch {}
+    try {
+      Write-Host "  stopping $($_.Name) PID $($_.ProcessId)"
+      $_ | Invoke-CimMethod -MethodName Terminate | Out-Null
+    } catch {}
   }
 
 Start-Sleep -Milliseconds 700
+
+# Remove every known legacy Startup mechanism before installing the one authoritative OHL link.
+foreach ($legacyPath in @($legacyStartupVbs, $legacyStartupLnk, $ohlStartupLnk)) {
+  if (Test-Path $legacyPath) {
+    Remove-Item $legacyPath -Force
+    Write-Host "  removed startup entry: $legacyPath"
+  }
+}
+
+# Older development revisions also used a Scheduled Task. Remove it when possible.
+foreach ($taskName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder')) {
+  try {
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($task) {
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+      Write-Host "  removed scheduled task: $taskName"
+    }
+  } catch {
+    Write-Warning "Could not remove legacy scheduled task '$taskName'. If it still exists, remove it from Task Scheduler."
+  }
+}
+
+# Best-effort cleanup for old HKCU Run entries from experimental builds.
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+foreach ($valueName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder', 'OHL Virtual AC3 Encoder')) {
+  try {
+    $value = Get-ItemProperty -Path $runKey -Name $valueName -ErrorAction SilentlyContinue
+    if ($null -ne $value) {
+      Remove-ItemProperty -Path $runKey -Name $valueName -ErrorAction Stop
+      Write-Host "  removed HKCU Run entry: $valueName"
+    }
+  } catch {}
+}
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item $engineSrc $InstallDir -Force
@@ -113,17 +176,19 @@ $exePath = Join-Path $InstallDir 'engine.exe'
 $logPath = Join-Path $InstallDir 'engine.log'
 
 New-Item -ItemType Directory -Force -Path $startup | Out-Null
-Set-Content -Path $supervisorPath -Encoding ASCII -Value @(
-  "' OHL Virtual AC3 Encoder startup launcher."
-  'Set sh = CreateObject("WScript.Shell")'
-  'q = Chr(34)'
-  "appPath = ""$exePath"""
-  "logFile = ""$logPath"""
-  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
-)
-
 New-Item -ItemType Directory -Force -Path $startMenuDir | Out-Null
 $ws = New-Object -ComObject WScript.Shell
+
+# One authoritative logon path: Windows Startup launches THIS installed OHL engine directly.
+# No supervisor, no old fixed-5.1 executable, no second install tree.
+$startupShortcut = $ws.CreateShortcut($ohlStartupLnk)
+$startupShortcut.TargetPath = $exePath
+$startupShortcut.Arguments = '--hidden --log "' + $logPath + '"'
+$startupShortcut.WorkingDirectory = $InstallDir
+$startupShortcut.Description = 'OHL Virtual AC3 Encoder - day-to-day engine'
+$startupShortcut.IconLocation = $exePath + ',0'
+$startupShortcut.Save()
+
 $shortcut = $ws.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $exePath
 $shortcut.Arguments = '--switcher'
@@ -135,6 +200,7 @@ Write-Host "Installed engine -> $InstallDir"
 Write-Host "Preserved config  -> $configDst"
 Write-Host "Tray control      -> enabled"
 Write-Host "Mode shortcut     -> $shortcutPath"
+Write-Host "Authoritative startup -> $ohlStartupLnk"
 Write-Host ''
 Write-Host 'Preflight: launching the staged engine directly...'
 
