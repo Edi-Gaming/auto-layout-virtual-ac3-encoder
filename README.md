@@ -196,15 +196,16 @@ Set `tray=0` in the config or pass `--no-tray` for headless operation.
 
 For the CI portable build, extract the artifact and double-click **`INSTALL-DAY-TO-DAY.cmd`**.
 It replaces the staged engine/DLLs, preserves an existing working config, enables tray control,
-refreshes the one-shot Startup launcher, creates an Audio Mode Switcher Start Menu shortcut, and
-starts the new background engine directly. Tray **Exit engine** is a normal intentional stop; the
+removes legacy fixed-5.1 startup entries, installs one authoritative **OHL Virtual AC3 Encoder**
+Startup shortcut that targets the current `%LOCALAPPDATA%\\virtual-ac3-encoder\\engine.exe`, creates
+an Audio Mode Switcher Start Menu shortcut, and starts the new background engine directly. Tray **Exit engine** is a normal intentional stop; the
 engine stays stopped until manually launched again or the next Windows logon.
 
 
 ## Set and forget (autostart)
 
 Install the engine to a stable per-user location and have it start hidden at every logon
-(no elevation, no Task Scheduler — a one-shot Startup-folder launcher in the real interactive
+(no elevation, no Task Scheduler — a direct Startup-folder shortcut in the real interactive
 session):
 
 ```powershell
@@ -215,8 +216,11 @@ scripts\remove-autostart.ps1 [-DeleteInstall]                 # undo
 ```
 
 This stages `engine.exe` + DLLs to `%LOCALAPPDATA%\virtual-ac3-encoder`, writes
-`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and drops a one-shot launcher in the Startup folder that starts `engine --hidden --log` once at
-logon. The persistent engine itself owns SURROUND/GUITAR mode changes.
+`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and creates **one authoritative** `OHL Virtual AC3 Encoder.lnk` in the Startup folder, targeting
+that exact installed engine with `--hidden --log`. Setup removes the known legacy
+`Virtual AC3 Encoder.lnk`, `VirtualAc3Encoder.vbs`, old scheduled-task names, and old HKCU Run
+entries before creating the OHL shortcut. The persistent engine itself owns SURROUND/GUITAR mode
+changes.
 
 ## Build (engine)
 
