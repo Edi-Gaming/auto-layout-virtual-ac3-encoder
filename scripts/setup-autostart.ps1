@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   "Set and forget": installs the engine to a stable per-user location, writes a config file,
-  and autostarts it hidden at logon via a direct Startup-folder shortcut to this engine.
+  and autostarts it hidden at logon via a one-shot WScript launcher targeting this engine.
 
   Uses the Startup folder (not Task Scheduler): it runs in the real interactive logon session
   where WASAPI + a hidden console work, and needs NO elevation.
@@ -81,17 +81,29 @@ Set-Content -Path (Join-Path $InstallDir 'virtual-ac3-encoder.conf') -Encoding U
 )
 Write-Host "Wrote config (in='$In', out='$Out', bitrate=$Bitrate, loopback=$([bool]$Loopback))"
 
-# 3. Direct Startup shortcut to the persistent OHL engine. No WScript/supervisor layer.
+# 3. Hidden one-shot launcher + authoritative Startup shortcut.
+#    WScript exists only to prevent a persistent console window; it is not a supervisor/watchdog.
 New-Item -ItemType Directory -Force -Path $startup | Out-Null
+$launcherPath = Join-Path $InstallDir 'OHL-Autostart.vbs'
+Set-Content -Path $launcherPath -Encoding ASCII -Value @(
+  "' OHL Virtual AC3 Encoder one-shot hidden launcher."
+  'Set sh = CreateObject("WScript.Shell")'
+  'q = Chr(34)'
+  "appPath = ""$exePath"""
+  "logFile = ""$logPath"""
+  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
+)
+
 $ws = New-Object -ComObject WScript.Shell
+$wscriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
 $startupShortcut = $ws.CreateShortcut($ohlLnk)
-$startupShortcut.TargetPath = $exePath
-$startupShortcut.Arguments = '--hidden --log "' + $logPath + '"'
+$startupShortcut.TargetPath = $wscriptPath
+$startupShortcut.Arguments = '"' + $launcherPath + '"'
 $startupShortcut.WorkingDirectory = $InstallDir
-$startupShortcut.Description = 'OHL Virtual AC3 Encoder - day-to-day engine'
+$startupShortcut.Description = 'OHL Virtual AC3 Encoder - hidden day-to-day engine'
 $startupShortcut.IconLocation = $exePath + ',0'
 $startupShortcut.Save()
-Write-Host "Installed authoritative Startup shortcut -> $ohlLnk"
+Write-Host "Installed authoritative hidden Startup shortcut -> $ohlLnk"
 
 # 4. Start it now (don't wait for the next logon).
 Get-CimInstance Win32_Process -Filter "Name='engine.exe'" |
