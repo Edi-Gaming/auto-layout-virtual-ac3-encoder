@@ -1,7 +1,17 @@
 # virtual-ac3-encoder
 
-[![CI](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml)
+[![CI](https://github.com/Edi-Gaming/auto-layout-virtual-ac3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Edi-Gaming/auto-layout-virtual-ac3-encoder/actions/workflows/ci.yml)
 
+> **This fork adds automatic AC3 2.0 / 5.1 payload switching.** A Windows 5.1 virtual
+> endpoint often reports six channels even when an app is actually stereo, which makes an AVR
+> believe it is receiving 5.1 and can lock out receiver-side stereo modes such as Dolby Pro Logic
+> II / A.F.D. With `layout=auto` (the default in this fork), the engine monitors the actual
+> C/LFE/surround PCM channels: stereo material is encoded as genuine AC3 2.0, and meaningful
+> non-front activity switches immediately to AC3 5.1. It waits for sustained non-front silence
+> before returning to 2.0 so quiet scenes do not flap the receiver between modes.
+> Windows CI on this fork builds the engine and runs the encoder/unit-test suite for each PR
+> using the Visual Studio 2022 runner expected by the project's CMake generator.
+>
 A Windows 10/11 software implementation of **"Dolby Digital Live"**: a virtual 5.1 audio
 device that accepts any multichannel PCM stream, encodes it to **AC3 (Dolby Digital)** in real
 time, and streams it as an **IEC 61937 / S-PDIF** bitstream out a chosen **Toslink optical**
@@ -66,7 +76,8 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - [x] **Working end-to-end (confirmed).** Because Secure Boot is ON here, the live system uses
       **VB-CABLE** as the 5.1 source: `engine --in "CABLE Output" --out "Realtek Digital Output"`
       → receiver decodes **Dolby Digital**. (Our own driver is ready for when Secure Boot is off.)
-- [ ] **Phase 4 — packaging** (config file + auto-start at logon; optional tray UI).
+- [x] **Phase 4 — day-to-day packaging/control.** Config + one-shot hidden logon launcher + native
+      Windows tray controller + persistent SURROUND/GUITAR runtime handoff.
 
 ## Components / engine flags
 
@@ -74,18 +85,30 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - `--list` — list render + capture endpoints.
 - `--probe` — which outputs accept AC3 passthrough (IsFormatSupported, non-intrusive).
 - `--mon` — capture-only throughput diagnostic (non-intrusive).
+- `--tray` / `--no-tray` — enable/disable the persistent Windows notification-area controller
+  (enabled by default).
 - `--loopback` — treat `--in` as a *render* endpoint and capture it via WASAPI loopback
   (used with the virtual driver).
 - `--in <name>` / `--in-id <id>` / `--out <name>` / `--out-id <id>` / `--out-spdif`
 - `--bitrate <bps>` (default 640000) / `--safe <frames>` (drift target, default 1536)
 - `--config <path>` (defaults to `virtual-ac3-encoder.conf` next to the exe) ·
   `--hidden` (hide console) · `--log <path>` (log to file) · `--duration <s>` (auto-stop)
-- `--upmix surround|off` — for stereo input, upmix to 5.1 via FFmpeg's `surround` filter
-  (a free DTS Neo:PC / Pro Logic II-style matrix upmix). **Default `surround`**; use `off` for
-  untouched stereo→front. Multichannel input is downmixed regardless.
+- `--upmix surround|off` — for fixed-5.1 operation, upmix a true <=2ch capture endpoint
+  to 5.1 via FFmpeg's `surround` filter. In automatic layout mode, stereo remains AC3 2.0 so
+  the AVR can perform its own stereo surround processing.
+- `--layout auto|5.1` — **default `auto` in this fork**. `auto` examines actual PCM activity
+  outside FL/FR and emits AC3 2.0 or 5.1 accordingly; `5.1` restores upstream fixed-5.1 behavior.
+- `--auto-threshold-db <dBFS>` — non-front peak threshold for 2.0→5.1 detection (default -60 dBFS).
+- `--auto-hold-ms <ms>` — non-front quiet time required before 5.1→2.0 (default 2000 ms).
+
+Auto-layout deliberately keeps two FFmpeg AC3 encoders alive at once, one stereo and one 5.1,
+while the IEC 61937 / S-PDIF carrier remains continuously open. The receiver therefore learns the
+active layout from each AC3 frame's own channel-mode metadata instead of from the Windows virtual
+endpoint's fixed six-channel format.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
-`bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`) < command-line flags.
+`bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
+`auto_hold_ms`, `tray`) < command-line flags.
 
 ## Driver (Phase 3)
 
@@ -122,11 +145,69 @@ engine\build\Release\engine.exe --in "CABLE Output" --out "Realtek Digital Outpu
 Set the virtual device as the Windows default 5.1 output, play surround content, and switch the
 receiver to the matching optical input — it should report Dolby Digital.
 
+### Low-latency guitar mode
+
+Live guitar monitoring should not be routed through the AC3 path: one AC3 frame is 1536 samples,
+which is already 32 ms at 48 kHz before DAW/plugin, virtual-cable, receiver, and other buffering.
+
+The engine therefore has a persistent runtime mode switcher:
+
+```powershell
+engine.exe --switcher
+# or:
+engine.exe --mode guitar
+engine.exe --mode surround
+engine.exe --mode status
+```
+
+**SURROUND** is the normal VB-CABLE -> AC3 -> S/PDIF path.
+
+**GUITAR** stops and destroys the live WASAPI capture/passthrough objects while keeping the
+background `engine.exe` process alive. Destroying the output object releases the exclusive S/PDIF
+`IAudioClient`, allowing ASIO4ALL / AmpliTube to open the Realtek optical endpoint directly with
+the low-latency PCM path. Switching back to SURROUND reconstructs the normal pipeline and
+reacquires S/PDIF. If another application still owns S/PDIF, the engine reports the error and
+retries every two seconds.
+
+When the hidden background engine is already running, double-clicking `engine.exe` with no
+arguments opens the mode switcher instead of starting a duplicate engine. The installer also adds
+an **Audio mode switcher** Start Menu shortcut.
+
+### Tray controller
+
+The persistent engine is intended to be used day to day from the Windows notification area.
+The tray icon uses a compact crop of the actual holographic OHL emblem and its tooltip reports
+SURROUND, GUITAR, transition, or error status. The larger mode switcher uses the same OHL mark in
+its title bar and a dark, cleaner OHL-styled layout.
+
+Right-click the icon for:
+
+- **Surround mode** — reacquire VB-CABLE + exclusive AC3 S/PDIF.
+- **Guitar / low-latency mode** — release S/PDIF for ASIO4ALL / AmpliTube.
+- **Open mode switcher...** — open the larger two-button controller.
+- **Open engine log** — available when the daemon was launched with `--log`.
+- **Exit engine** — cleanly stop the persistent daemon.
+
+Double-click the tray icon to open the larger mode switcher. The tray icon survives normal mode
+changes because the engine process itself never exits. Explorer/taskbar restarts are detected and
+the icon is re-added automatically.
+
+Set `tray=0` in the config or pass `--no-tray` for headless operation.
+
+For the CI portable build, extract the artifact and double-click **`INSTALL-DAY-TO-DAY.cmd`**.
+It replaces the staged engine/DLLs, preserves an existing working config, enables tray control,
+removes legacy fixed-5.1 startup entries, installs one authoritative **OHL Virtual AC3 Encoder**
+Startup shortcut that invokes the one-shot hidden `OHL-Autostart.vbs` launcher for the current
+`%LOCALAPPDATA%\\virtual-ac3-encoder\\engine.exe`, creates
+an Audio Mode Switcher Start Menu shortcut, and starts the new background engine directly. Tray **Exit engine** is a normal intentional stop; the
+engine stays stopped until manually launched again or the next Windows logon.
+
+
 ## Set and forget (autostart)
 
-Install the engine to a stable per-user location and have it start hidden at every logon, with
-restart-on-failure (no elevation, no Task Scheduler — a Startup-folder supervisor that runs in the
-real interactive session):
+Install the engine to a stable per-user location and have it start hidden at every logon
+(no elevation, no Task Scheduler — a one-shot hidden Startup launcher in the real interactive
+session):
 
 ```powershell
 scripts\setup-autostart.ps1                                   # VB-CABLE -> Realtek (defaults)
@@ -136,8 +217,13 @@ scripts\remove-autostart.ps1 [-DeleteInstall]                 # undo
 ```
 
 This stages `engine.exe` + DLLs to `%LOCALAPPDATA%\virtual-ac3-encoder`, writes
-`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and drops a supervisor in the
-Startup folder that runs `engine --hidden --log` and relaunches it if it exits.
+`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and creates **one authoritative** `OHL Virtual AC3 Encoder.lnk` in the Startup folder, targeting
+a uniquely named one-shot `OHL-Autostart.vbs` launcher. That launcher starts the exact installed
+engine with `--hidden --log` and immediately exits; it is not a watchdog. Setup removes the known legacy
+`Virtual AC3 Encoder.lnk`, `VirtualAc3Encoder.vbs`, old scheduled-task names, and old HKCU Run
+entries before creating the OHL shortcut. The persistent engine itself owns SURROUND/GUITAR mode
+changes. The installer also creates a **Start OHL Encoder** Start Menu shortcut for manual recovery
+if the daemon was exited.
 
 ## Build (engine)
 

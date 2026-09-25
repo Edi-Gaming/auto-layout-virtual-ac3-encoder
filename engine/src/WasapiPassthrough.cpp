@@ -6,6 +6,10 @@
 #include <ksmedia.h>
 #include <avrt.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
 extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
@@ -21,8 +25,10 @@ AVSampleFormat MapSampleFmt(const CaptureFormat& f)
   return AV_SAMPLE_FMT_NONE;
 }
 
-// Build the AC3-over-S/PDIF format. `extended` uses the full WAVEFORMATEXTENSIBLE_IEC61937
-// (MSDN-canonical); otherwise a plain WAVEFORMATEXTENSIBLE (Kodi-style, broader compat).
+// Build the AC3-over-S/PDIF carrier format. The endpoint is opened advertising the maximum
+// encoded layout (5.1) so drivers that validate IEC61937 metadata continue to accept it.
+// Auto-layout changes the AC3 payload's own acmod between 2.0 and 5.1; the IEC60958 carrier
+// itself is always two-channel, 16-bit.
 void FillAc3Format(WAVEFORMATEXTENSIBLE_IEC61937& w, int rate, bool extended)
 {
   ZeroMemory(&w, sizeof w);
@@ -34,19 +40,26 @@ void FillAc3Format(WAVEFORMATEXTENSIBLE_IEC61937& w, int rate, bool extended)
   x.Format.nBlockAlign = 4;
   x.Format.nAvgBytesPerSec = rate * 4;
   x.Samples.wValidBitsPerSample = 16;
-  x.dwChannelMask = KSAUDIO_SPEAKER_5POINT1;    // hints encoded 5.1 content
+  x.dwChannelMask = KSAUDIO_SPEAKER_5POINT1;    // maximum encoded capability hint
   x.SubFormat = KSDATAFORMAT_SUBTYPE_IEC61937_DOLBY_DIGITAL;
   if (extended)
   {
     x.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE_IEC61937) - sizeof(WAVEFORMATEX);
     w.dwEncodedSamplesPerSec = rate;
-    w.dwEncodedChannelCount = 6;
+    w.dwEncodedChannelCount = 6;                // capability hint; payload may be AC3 2.0
     w.dwAverageBytesPerSec = 0;
   }
   else
   {
     x.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
   }
+}
+
+double PeakDb(double peak)
+{
+  if (peak <= 1.0e-12)
+    return -240.0;
+  return 20.0 * std::log10(peak);
 }
 
 } // namespace
@@ -96,7 +109,8 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
     return false;
   }
 
-  // Configure the encoder. Input = the capture layout; downmixed to 5.1 internally.
+  // Both encoders consume the exact same interleaved capture packet. Only their AC3 payload
+  // layouts differ, so changing layout never requires reopening WASAPI or the optical endpoint.
   SpdifEncoder::Params ep;
   ep.sampleRate = rate;
   ep.bitRate = params_.bitRate;
@@ -107,11 +121,54 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
   else
     av_channel_layout_default(&ep.inLayout, static_cast<int>(capFmt.channels));
 
-  bool encOk = enc_.Init(ep);
-  av_channel_layout_uninit(&ep.inLayout);
+  ep.outputLayout = SpdifEncoder::OutputLayout::Surround51;
+  bool encOk = enc51_.Init(ep);
   if (!encOk)
+  {
+    av_channel_layout_uninit(&ep.inLayout);
     return false;
-  framesPerPacket_ = enc_.FramesPerPacket();
+  }
+  framesPerPacket_ = enc51_.FramesPerPacket();
+
+  if (params_.autoLayout)
+  {
+    // In auto mode stereo stays genuinely stereo. Do not run the FFmpeg surround upmixer here;
+    // the point is to hand AC3 2.0 to the receiver and let its own A.F.D./PLII logic work.
+    ep.outputLayout = SpdifEncoder::OutputLayout::Stereo;
+    ep.upmix = SpdifEncoder::Upmix::Off;
+    encOk = encStereo_.Init(ep);
+    if (!encOk || encStereo_.FramesPerPacket() != framesPerPacket_)
+    {
+      std::fprintf(stderr, "[WasapiPassthrough] failed to initialize matching AC3 stereo encoder\n");
+      av_channel_layout_uninit(&ep.inLayout);
+      return false;
+    }
+  }
+  av_channel_layout_uninit(&ep.inLayout);
+
+  const double thresholdDb = std::clamp(params_.autoThresholdDb, -120.0, 0.0);
+  thresholdLinear_ = std::pow(10.0, thresholdDb / 20.0);
+  const uint64_t holdNumerator =
+      static_cast<uint64_t>(params_.autoHoldMs) * static_cast<uint64_t>(rate);
+  const uint64_t packetDenominator =
+      static_cast<uint64_t>(framesPerPacket_) * static_cast<uint64_t>(1000);
+  holdPackets_ = static_cast<uint32_t>(
+      std::max<uint64_t>(1, (holdNumerator + packetDenominator - 1) / packetDenominator));
+
+  BuildActivityChannelList();
+
+  if (params_.autoLayout)
+  {
+    const double actualHoldMs =
+        1000.0 * static_cast<double>(holdPackets_ * framesPerPacket_) / static_cast<double>(rate);
+    std::printf("[AutoLayout] enabled: threshold %.1f dBFS, 5.1->2.0 hold %.0f ms, "
+                "%zu non-front channel(s) monitored\n",
+                thresholdDb, actualHoldMs, activityChannels_.size());
+  }
+  else
+  {
+    std::printf("[AutoLayout] disabled: fixed AC3 5.1 output\n");
+  }
 
   if (!InitExclusive(rate))
     return false;
@@ -121,6 +178,140 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
   silence_.assign(pktBytes, 0);
   burst_.resize(kBurstBytes);
   return true;
+}
+
+void WasapiPassthrough::BuildActivityChannelList()
+{
+  activityChannels_.clear();
+  if (capFmt_.channels <= 2)
+    return;
+
+  std::vector<bool> isFront(capFmt_.channels, false);
+  bool foundFl = false;
+  bool foundFr = false;
+
+  if (capFmt_.channelMask)
+  {
+    unsigned channelIndex = 0;
+    for (unsigned bit = 0; bit < 32 && channelIndex < capFmt_.channels; ++bit)
+    {
+      const uint32_t speaker = uint32_t{1} << bit;
+      if ((capFmt_.channelMask & speaker) == 0)
+        continue;
+
+      if (speaker == SPEAKER_FRONT_LEFT)
+      {
+        isFront[channelIndex] = true;
+        foundFl = true;
+      }
+      else if (speaker == SPEAKER_FRONT_RIGHT)
+      {
+        isFront[channelIndex] = true;
+        foundFr = true;
+      }
+      ++channelIndex;
+    }
+  }
+
+  // A zero/odd speaker mask is uncommon for VB-CABLE, but the conventional interleaved order
+  // still begins FL, FR. Falling back here is preferable to declaring stereo audio "surround"
+  // merely because the endpoint did not publish a mask.
+  if (!foundFl || !foundFr)
+  {
+    std::fill(isFront.begin(), isFront.end(), false);
+    isFront[0] = true;
+    if (capFmt_.channels > 1)
+      isFront[1] = true;
+    std::printf("[AutoLayout] channel mask unavailable/ambiguous; assuming channels 0/1 are FL/FR\n");
+  }
+
+  for (unsigned i = 0; i < capFmt_.channels; ++i)
+    if (!isFront[i])
+      activityChannels_.push_back(i);
+}
+
+bool WasapiPassthrough::PacketHasNonFrontActivity(const uint8_t* in, double& peak) const
+{
+  peak = 0.0;
+  if (activityChannels_.empty())
+    return false;
+
+  const size_t bytesPerSample = capFmt_.bits / 8;
+  if (bytesPerSample == 0)
+    return false;
+
+  for (int frame = 0; frame < framesPerPacket_; ++frame)
+  {
+    const size_t frameBase =
+        static_cast<size_t>(frame) * static_cast<size_t>(capFmt_.channels) * bytesPerSample;
+
+    for (unsigned ch : activityChannels_)
+    {
+      const uint8_t* p = in + frameBase + static_cast<size_t>(ch) * bytesPerSample;
+      double value = 0.0;
+
+      if (capFmt_.isFloat && capFmt_.bits == 32)
+      {
+        float s = 0.0f;
+        std::memcpy(&s, p, sizeof s);
+        if (std::isfinite(s))
+          value = std::fabs(static_cast<double>(s));
+      }
+      else if (!capFmt_.isFloat && capFmt_.bits == 16)
+      {
+        int16_t s = 0;
+        std::memcpy(&s, p, sizeof s);
+        value = std::fabs(static_cast<double>(s) / 32768.0);
+      }
+      else if (!capFmt_.isFloat && capFmt_.bits == 32)
+      {
+        int32_t s = 0;
+        std::memcpy(&s, p, sizeof s);
+        value = std::fabs(static_cast<double>(s) / 2147483648.0);
+      }
+
+      if (value > peak)
+        peak = value;
+    }
+  }
+
+  return peak >= thresholdLinear_;
+}
+
+SpdifEncoder& WasapiPassthrough::SelectEncoder(const uint8_t* in, bool haveRealInput)
+{
+  if (!params_.autoLayout)
+    return enc51_;
+
+  if (haveRealInput)
+  {
+    double peak = 0.0;
+    const bool surroundActive = PacketHasNonFrontActivity(in, peak);
+
+    if (surroundActive)
+    {
+      quietPackets_ = 0;
+      if (!activeIsSurround_)
+      {
+        activeIsSurround_ = true;
+        std::fprintf(stderr, "[AutoLayout] 2.0 -> 5.1 (non-front peak %.1f dBFS)\n", PeakDb(peak));
+        std::fflush(stderr);
+      }
+    }
+    else if (activeIsSurround_)
+    {
+      if (++quietPackets_ >= holdPackets_)
+      {
+        activeIsSurround_ = false;
+        quietPackets_ = 0;
+        std::fprintf(stderr, "[AutoLayout] 5.1 -> 2.0 (non-front channels quiet for %u ms)\n",
+                     params_.autoHoldMs);
+        std::fflush(stderr);
+      }
+    }
+  }
+
+  return activeIsSurround_ ? enc51_ : encStereo_;
 }
 
 bool WasapiPassthrough::InitExclusive(int rate)
@@ -224,17 +415,22 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
   for (int b = 0; b < burstsPerCycle_; ++b)
   {
     const uint8_t* in;
+    bool haveRealInput = false;
     if (ring_->BytesAvailable() >= pktBytes)
     {
       ring_->Read(staging_.data(), pktBytes);
       in = staging_.data();
+      haveRealInput = true;
     }
     else
     {
-      in = silence_.data(); // underrun: emit AC3 silence, leave the ring to refill
+      // Underruns must not count as "quiet" for auto-layout; otherwise a capture hiccup could
+      // make the AVR switch formats. Preserve the current layout while emitting AC3 silence.
+      in = silence_.data();
     }
 
-    int n = enc_.EncodePacket(in, burst_.data(), static_cast<int>(burst_.size()));
+    SpdifEncoder& enc = SelectEncoder(in, haveRealInput);
+    int n = enc.EncodePacket(in, burst_.data(), static_cast<int>(burst_.size()));
     if (n <= 0)
     {
       std::memset(burst_.data(), 0, kBurstBytes); // priming / error: stuff zeros this slot
@@ -256,6 +452,8 @@ bool WasapiPassthrough::Start()
   ResetEvent(stopEvent_);
   cycle_ = 0;
   minAvail_ = 0xFFFFFFFFu;
+  activeIsSurround_ = false;
+  quietPackets_ = 0;
 
   // Pre-fill the first buffer (primes the encoder and avoids an initial underrun) before Start.
   BYTE* out = nullptr;

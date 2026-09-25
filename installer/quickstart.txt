@@ -29,6 +29,36 @@ shortcut and set, for example:
 
 Then switch your receiver to the matching optical input -- it should display Dolby Digital.
 
+Low-latency guitar / S/PDIF handoff
+-----------------------------------
+The background engine can stay alive while completely releasing the optical endpoint for
+an ASIO application such as AmpliTube + ASIO4ALL.
+
+Open Start Menu > "Audio mode switcher", or run:
+       engine.exe --switcher
+
+SURROUND keeps the normal VB-CABLE -> AC3 -> S/PDIF path active.
+GUITAR destroys the live WASAPI pipeline but keeps engine.exe alive, releasing S/PDIF so
+ASIO4ALL can open it directly. Switching back to SURROUND rebuilds and reacquires the
+normal encoder path.
+
+Terminal controls:
+       engine.exe --mode surround
+       engine.exe --mode guitar
+       engine.exe --mode status
+
+If the hidden engine is already running, simply double-clicking engine.exe also opens the
+mode switcher.
+
+Day-to-day tray control
+-----------------------
+The installed background engine shows a Windows notification-area icon by default. Right-click it
+to switch SURROUND/GUITAR modes, open the larger mode switcher, open engine.log, or exit cleanly.
+Double-click the icon to open the larger mode switcher.
+
+Set tray=0 in virtual-ac3-encoder.conf or launch with --no-tray if you intentionally want a
+headless engine.
+
 Handy commands (open a terminal in this folder)
 -----------------------------------------------
        engine.exe --list      list audio input/output devices

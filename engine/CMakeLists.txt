@@ -70,17 +70,23 @@ stage_ffmpeg_dlls(encode_wav)
 add_executable(engine
   src/main.cpp
   src/Config.h
+  src/BrandIcon.cpp
+  src/BrandIcon.h
   src/ComUtil.cpp
   src/ComUtil.h
   src/Guids.cpp
   src/DeviceEnum.cpp
   src/DeviceEnum.h
+  src/ModeControl.cpp
+  src/ModeControl.h
+  src/TrayIcon.cpp
+  src/TrayIcon.h
   src/WasapiCapture.cpp
   src/WasapiCapture.h
   src/WasapiPassthrough.cpp
   src/WasapiPassthrough.h
 )
-target_link_libraries(engine PRIVATE ac3core ffmpeg ole32 avrt)
+target_link_libraries(engine PRIVATE ac3core ffmpeg ole32 avrt user32 gdi32 shell32)
 if(MSVC)
   target_compile_options(engine PRIVATE /permissive-)
 endif()
