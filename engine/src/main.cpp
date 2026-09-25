@@ -369,23 +369,38 @@ int main(int argc, char** argv)
   HandleControllerCommandLine(argc, argv);
 
   // Pre-scan for --log / --hidden so they apply before any output or device work.
+  // Parse first, redirect logging second, then detach from the console. Detaching means the
+  // background engine cannot be killed accidentally by closing a launcher/console window.
   std::string logPath;
+  bool hidden = false;
   for (int i = 1; i < argc; ++i)
   {
     std::string a = argv[i];
     if (a == "--hidden")
     {
-      HWND con = GetConsoleWindow();
-      if (con) ShowWindow(con, SW_HIDE);
+      hidden = true;
     }
     else if (a == "--log" && i + 1 < argc)
     {
       logPath = argv[i + 1];
-      FILE* fp = std::freopen(logPath.c_str(), "a", stdout);
-      (void)fp;
-      std::freopen(logPath.c_str(), "a", stderr);
+      ++i;
     }
   }
+
+  if (!logPath.empty())
+  {
+    FILE* fp = std::freopen(logPath.c_str(), "a", stdout);
+    (void)fp;
+    std::freopen(logPath.c_str(), "a", stderr);
+  }
+
+  if (hidden)
+  {
+    HWND con = GetConsoleWindow();
+    if (con) ShowWindow(con, SW_HIDE);
+    FreeConsole();
+  }
+
   setvbuf(stdout, nullptr, _IONBF, 0);
   std::printf("virtual-ac3-encoder %s\n", VAC3_VERSION);
 
