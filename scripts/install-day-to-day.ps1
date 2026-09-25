@@ -58,6 +58,7 @@ if (-not (Test-Path $engineSrc)) {
 
 $startMenuDir = Join-Path $programsDir 'OHL Virtual AC3 Encoder'
 $shortcutPath = Join-Path $startMenuDir 'Audio Mode Switcher.lnk'
+$startShortcutPath = Join-Path $startMenuDir 'Start OHL Encoder.lnk'
 
 Write-Host "Source folder     -> $SourceDir"
 Write-Host "Install folder    -> $InstallDir"
@@ -174,27 +175,41 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
 
 $exePath = Join-Path $InstallDir 'engine.exe'
 $logPath = Join-Path $InstallDir 'engine.log'
+$launcherPath = Join-Path $InstallDir 'OHL-Autostart.vbs'
+
+# One-shot hidden launcher. This is intentionally NOT a supervisor/watchdog: it starts the
+# exact installed OHL engine once, hidden, and exits immediately.
+Set-Content -Path $launcherPath -Encoding ASCII -Value @(
+  "' OHL Virtual AC3 Encoder one-shot hidden launcher."
+  'Set sh = CreateObject("WScript.Shell")'
+  'q = Chr(34)'
+  "appPath = ""$exePath"""
+  "logFile = ""$logPath"""
+  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
+)
 
 New-Item -ItemType Directory -Force -Path $startup | Out-Null
 New-Item -ItemType Directory -Force -Path $startMenuDir | Out-Null
 $ws = New-Object -ComObject WScript.Shell
 
-# One authoritative logon path: Windows Startup launches THIS installed OHL engine directly.
-# No supervisor, no old fixed-5.1 executable, no second install tree.
+# One authoritative logon path. Windows Startup runs a tiny one-shot WScript launcher so
+# engine.exe gets no persistent console window. The launcher itself targets THIS exact OHL install.
+$wscriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
 $startupShortcut = $ws.CreateShortcut($ohlStartupLnk)
-$startupShortcut.TargetPath = $exePath
-$startupShortcut.Arguments = '--hidden --log "' + $logPath + '"'
+$startupShortcut.TargetPath = $wscriptPath
+$startupShortcut.Arguments = '"' + $launcherPath + '"'
 $startupShortcut.WorkingDirectory = $InstallDir
-$startupShortcut.Description = 'OHL Virtual AC3 Encoder - day-to-day engine'
+$startupShortcut.Description = 'OHL Virtual AC3 Encoder - hidden day-to-day engine'
 $startupShortcut.IconLocation = $exePath + ',0'
 $startupShortcut.Save()
 
-# Verify the authoritative startup entry points at the exact engine we just installed.
+# Verify the authoritative startup entry points at our hidden launcher, not an old engine tree.
 $startupCheck = $ws.CreateShortcut($ohlStartupLnk)
-if (-not [string]::Equals($startupCheck.TargetPath, $exePath, [System.StringComparison]::OrdinalIgnoreCase)) {
-  throw "Startup shortcut verification failed. Expected '$exePath', got '$($startupCheck.TargetPath)'."
+if (-not [string]::Equals($startupCheck.TargetPath, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $startupCheck.Arguments -notlike "*$launcherPath*") {
+  throw "Startup shortcut verification failed. Expected WScript -> '$launcherPath'."
 }
-Write-Host "  startup target verified: $($startupCheck.TargetPath)"
+Write-Host "  startup target verified: $($startupCheck.TargetPath) $($startupCheck.Arguments)"
 
 $shortcut = $ws.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $exePath
@@ -203,10 +218,20 @@ $shortcut.WorkingDirectory = $InstallDir
 $shortcut.Description = 'OHL Virtual AC3 Encoder - Surround / Guitar mode switcher'
 $shortcut.Save()
 
+# Manual recovery shortcut: safe to click whenever the engine was exited/closed.
+$startShortcut = $ws.CreateShortcut($startShortcutPath)
+$startShortcut.TargetPath = $wscriptPath
+$startShortcut.Arguments = '"' + $launcherPath + '"'
+$startShortcut.WorkingDirectory = $InstallDir
+$startShortcut.Description = 'Start OHL Virtual AC3 Encoder hidden'
+$startShortcut.IconLocation = $exePath + ',0'
+$startShortcut.Save()
+
 Write-Host "Installed engine -> $InstallDir"
 Write-Host "Preserved config  -> $configDst"
 Write-Host "Tray control      -> enabled"
 Write-Host "Mode shortcut     -> $shortcutPath"
+Write-Host "Start shortcut    -> $startShortcutPath"
 Write-Host "Authoritative startup -> $ohlStartupLnk"
 Write-Host ''
 Write-Host 'Preflight: launching the staged engine directly...'
