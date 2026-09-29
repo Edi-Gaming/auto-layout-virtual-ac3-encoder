@@ -242,12 +242,12 @@ bool WriteValues(const std::string& path, const std::map<std::string, std::strin
   return true;
 }
 
-HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool small = false)
+HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool useSmallFont = false)
 {
   HWND c = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE,
                          x, y, w, h, parent, nullptr, nullptr, nullptr);
   SendMessageW(c, WM_SETFONT,
-               reinterpret_cast<WPARAM>(small ? gSmallFont : gUiFont), TRUE);
+               reinterpret_cast<WPARAM>(useSmallFont ? gSmallFont : gUiFont), TRUE);
   return c;
 }
 
@@ -390,11 +390,11 @@ void PullControlsToState(HWND hwnd, SettingsState& s)
 
   s.centerHp = std::clamp(GetDoubleEdit(hwnd, kCenterHp, s.centerHp), 200.0, 12000.0);
   s.centerLp = std::clamp(GetDoubleEdit(hwnd, kCenterLp, s.centerLp), 1000.0, 24000.0);
-  if (s.centerLp <= s.centerHp) s.centerLp = std::min(24000.0, s.centerHp + 500.0);
+  if (s.centerLp <= s.centerHp) s.centerLp = (std::min)(24000.0, s.centerHp + 500.0);
 
   s.rearHp = std::clamp(GetDoubleEdit(hwnd, kRearHp, s.rearHp), 0.0, 2000.0);
   s.rearLp = std::clamp(GetDoubleEdit(hwnd, kRearLp, s.rearLp), 1000.0, 24000.0);
-  if (s.rearLp <= s.rearHp) s.rearLp = std::min(24000.0, s.rearHp + 500.0);
+  if (s.rearLp <= s.rearHp) s.rearLp = (std::min)(24000.0, s.rearHp + 500.0);
 
   s.rearLeftTrim = std::clamp(GetDoubleEdit(hwnd, kRearLeftTrim, s.rearLeftTrim), 0.0, 2.0);
   s.rearRightTrim = std::clamp(GetDoubleEdit(hwnd, kRearRightTrim, s.rearRightTrim), 0.0, 2.0);
