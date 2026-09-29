@@ -17,11 +17,13 @@
 #include "ComUtil.h"
 #include "RingBuffer.h"
 #include "SpdifEncoder.h"
+#include "OhlMusicUpmixer.h"
 #include "WasapiCapture.h" // CaptureFormat
 
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <thread>
@@ -40,7 +42,14 @@ public:
     // the AVR receives 2.0 or 5.1; actual PCM activity does.
     bool     autoLayout = true;
     double   autoThresholdDb = -60.0; // peak threshold on C/LFE/surround channels
-    uint32_t autoHoldMs = 2000;       // quiet time before 5.1 -> 2.0
+    uint32_t autoHoldMs = 2000;       // quiet time before native 5.1 -> stereo policy
+
+    // Optional OHL Music stereo policy. When false, auto-layout's stereo state remains genuine
+    // AC3 2.0 for receiver-side PLII/A.F.D. When true, stereo is spatialized into discrete 5.1
+    // with phantom center and a silent LFE; native multichannel input still bypasses it.
+    bool musicStereo = false;
+    double musicSurroundGain = 0.55;
+    std::array<double, 6> musicDistanceInches{{33.0, 33.0, 30.0, 33.0, 27.0, 33.0}};
   };
 
   WasapiPassthrough() = default;
@@ -62,10 +71,18 @@ private:
   void EncodeIntoBuffer(BYTE* out); // fills one full WASAPI buffer with bursts (+ stuffing)
   void ThreadProc();
 
+  enum class AutoPayload
+  {
+    ReceiverStereo,
+    Native51,
+    Music51,
+  };
+
   // Auto-layout helpers.
   void BuildActivityChannelList();
   bool PacketHasNonFrontActivity(const uint8_t* in, double& peak) const;
-  SpdifEncoder& SelectEncoder(const uint8_t* in, bool haveRealInput);
+  AutoPayload SelectAutoPayload(const uint8_t* in, bool haveRealInput);
+  void ExtractFrontStereoFloat(const uint8_t* in, float* stereo) const;
 
   ComPtr<IMMDevice>          dev_;
   ComPtr<IAudioClient>       client_;
@@ -78,6 +95,8 @@ private:
 
   SpdifEncoder   enc51_;
   SpdifEncoder   encStereo_;
+  SpdifEncoder   encMusic51_;
+  OhlMusicUpmixer musicUpmixer_;
   int            framesPerPacket_ = 1536;
   static constexpr int kBurstBytes = SpdifEncoder::kMaxBytesPerPacket; // 6144
   static constexpr int kCarrierBytesPerFrame = 4; // 2ch * 16-bit IEC60958
@@ -106,4 +125,6 @@ private:
   std::vector<uint8_t> staging_; // one packet of capture frames
   std::vector<uint8_t> silence_; // same, zeroed
   std::vector<uint8_t> burst_;   // one IEC 61937 burst
+  std::vector<float> musicStereo_; // one packet of extracted FL/FR float PCM
+  std::vector<float> music51_;     // one packet of OHL Music 5.1 float PCM
 };
