@@ -99,16 +99,37 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - `--layout auto|5.1` — **default `auto` in this fork**. `auto` examines actual PCM activity
   outside FL/FR and emits AC3 2.0 or 5.1 accordingly; `5.1` restores upstream fixed-5.1 behavior.
 - `--auto-threshold-db <dBFS>` — non-front peak threshold for 2.0→5.1 detection (default -60 dBFS).
-- `--auto-hold-ms <ms>` — non-front quiet time required before 5.1→2.0 (default 2000 ms).
+- `--auto-hold-ms <ms>` — non-front quiet time required before native 5.1 falls back to the
+  selected stereo policy (default 2000 ms).
+- `--stereo-processing receiver|music` — in auto layout, choose genuine AC3 2.0 for receiver-side
+  PLII/A.F.D. (`receiver`, default) or experimental OHL Music stereo spatialization (`music`).
+- `--music-surround-gain <gain>` — OHL Music derived-surround strength (default 0.55).
 
-Auto-layout deliberately keeps two FFmpeg AC3 encoders alive at once, one stereo and one 5.1,
-while the IEC 61937 / S-PDIF carrier remains continuously open. The receiver therefore learns the
-active layout from each AC3 frame's own channel-mode metadata instead of from the Windows virtual
-endpoint's fixed six-channel format.
+With `stereo_processing=receiver`, auto-layout keeps the original stereo and 5.1 FFmpeg AC3
+encoders alive and switches AC3 payload metadata without reopening S/PDIF.
+
+### Experimental OHL Music v0.1
+
+`stereo_processing=music` replaces receiver-side PLII for stereo material with an original
+software spatializer before AC3 encoding. It is deliberately conservative:
+
+- FL/FR preserve the original stereo program.
+- C is silent, producing a phantom center from the main front pair.
+- LFE is silent; v0.1 does not synthesize bass management.
+- SL/SR are derived from stereo difference information with block correlation/coherence,
+  hard-pan suppression, and transient protection.
+- Native C/LFE/surround activity always bypasses OHL Music and uses the existing native 5.1 path.
+- Per-channel integer-sample delay is applied before AC3 encoding from measured speaker distances.
+
+Current reference tuning is `music_surround_gain=0.55` with listening-position distances
+FL=33", FR=33", C=30", SL=27", SR=33". At 48 kHz this yields approximately 0/0/11/21/0
+samples of added delay for FL/FR/C/SL/SR respectively. The feature is opt-in; packaged and upgraded
+configs stay on `stereo_processing=receiver` until explicitly changed.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
 `bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
-`auto_hold_ms`, `tray`) < command-line flags.
+`auto_hold_ms`, `stereo_processing`, `music_surround_gain`, `music_distance_*_in`, `tray`)
+< command-line flags.
 
 ## Driver (Phase 3)
 
