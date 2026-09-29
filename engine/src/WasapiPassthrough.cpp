@@ -158,10 +158,21 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       op.sampleRate = rate;
       op.surroundGain = static_cast<float>(params_.musicSurroundGain);
       op.widthFloor = static_cast<float>(params_.musicWidthFloor);
+      op.ambienceLowWeight = static_cast<float>(params_.musicAmbienceLowWeight);
+      op.ambienceMidWeight = static_cast<float>(params_.musicAmbienceMidWeight);
+      op.ambienceHighWeight = static_cast<float>(params_.musicAmbienceHighWeight);
+      op.ambienceAttackMs = static_cast<float>(params_.musicAmbienceAttackMs);
+      op.ambienceReleaseMs = static_cast<float>(params_.musicAmbienceReleaseMs);
       op.directReject = static_cast<float>(params_.musicDirectReject);
+      op.directThreshold = static_cast<float>(params_.musicDirectThreshold);
+      op.directRecoveryMs = static_cast<float>(params_.musicDirectRecoveryMs);
       op.centerTrebleGain = static_cast<float>(params_.musicCenterTrebleGain);
       op.centerTrebleHz = static_cast<float>(params_.musicCenterTrebleHz);
+      op.centerLowpassHz = static_cast<float>(params_.musicCenterLowpassHz);
       op.rearHighpassHz = static_cast<float>(params_.musicRearHighpassHz);
+      op.rearLowpassHz = static_cast<float>(params_.musicRearLowpassHz);
+      op.rearLeftTrim = static_cast<float>(params_.musicRearLeftTrim);
+      op.rearRightTrim = static_cast<float>(params_.musicRearRightTrim);
       for (size_t i = 0; i < op.distanceInches.size(); ++i)
         op.distanceInches[i] = static_cast<float>(params_.musicDistanceInches[i]);
 
@@ -173,15 +184,27 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       }
 
       const auto& d = musicUpmixer_.DelaySamples();
-      std::printf("[OhlMusic] enabled: adaptive %.2f, side-width %.2f, direct-reject %.2f, "
-                  "center-treble %.2f @ %.0f Hz, rear HP %.0f Hz, "
+      std::printf("[OhlMusic] enabled: adaptive %.2f, side-width %.2f, bands %.2f/%.2f/%.2f, "
+                  "ambience %.0f/%.0f ms, direct %.2f @ %.2f (%.0f ms), center %.2f %.0f-%.0f Hz, "
+                  "rear %.0f-%.0f Hz trims %.2f/%.2f, "
                   "delay samples FL=%d FR=%d C=%d LFE=%d SL=%d SR=%d\n",
                   params_.musicSurroundGain,
                   params_.musicWidthFloor,
+                  params_.musicAmbienceLowWeight,
+                  params_.musicAmbienceMidWeight,
+                  params_.musicAmbienceHighWeight,
+                  params_.musicAmbienceAttackMs,
+                  params_.musicAmbienceReleaseMs,
                   params_.musicDirectReject,
+                  params_.musicDirectThreshold,
+                  params_.musicDirectRecoveryMs,
                   params_.musicCenterTrebleGain,
                   params_.musicCenterTrebleHz,
+                  params_.musicCenterLowpassHz,
                   params_.musicRearHighpassHz,
+                  params_.musicRearLowpassHz,
+                  params_.musicRearLeftTrim,
+                  params_.musicRearRightTrim,
                   d[0], d[1], d[2], d[3], d[4], d[5]);
     }
     else
