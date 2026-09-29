@@ -158,6 +158,7 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       op.sampleRate = rate;
       op.surroundGain = static_cast<float>(params_.musicSurroundGain);
       op.widthFloor = static_cast<float>(params_.musicWidthFloor);
+      op.directReject = static_cast<float>(params_.musicDirectReject);
       op.centerTrebleGain = static_cast<float>(params_.musicCenterTrebleGain);
       op.centerTrebleHz = static_cast<float>(params_.musicCenterTrebleHz);
       op.rearHighpassHz = static_cast<float>(params_.musicRearHighpassHz);
@@ -172,10 +173,12 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       }
 
       const auto& d = musicUpmixer_.DelaySamples();
-      std::printf("[OhlMusic] enabled: adaptive %.2f, width %.2f, center-treble %.2f @ %.0f Hz, "
-                  "rear HP %.0f Hz, delay samples FL=%d FR=%d C=%d LFE=%d SL=%d SR=%d\n",
+      std::printf("[OhlMusic] enabled: adaptive %.2f, side-width %.2f, direct-reject %.2f, "
+                  "center-treble %.2f @ %.0f Hz, rear HP %.0f Hz, "
+                  "delay samples FL=%d FR=%d C=%d LFE=%d SL=%d SR=%d\n",
                   params_.musicSurroundGain,
                   params_.musicWidthFloor,
+                  params_.musicDirectReject,
                   params_.musicCenterTrebleGain,
                   params_.musicCenterTrebleHz,
                   params_.musicRearHighpassHz,
