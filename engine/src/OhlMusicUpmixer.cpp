@@ -31,15 +31,32 @@ struct BandStats
   }
 };
 
-double AmbienceScore(const BandStats& b)
+double BandCorrelation(const BandStats& b)
 {
   const double denom = std::sqrt(b.eL * b.eR);
-  const double corr = denom > kEps ? std::clamp(b.cross / denom, -1.0, 1.0) : 1.0;
+  return denom > kEps ? std::clamp(b.cross / denom, -1.0, 1.0) : 1.0;
+}
 
+double BandBalance(const BandStats& b)
+{
   const double rmsL = std::sqrt(b.eL);
   const double rmsR = std::sqrt(b.eR);
   const double sum = rmsL + rmsR;
-  const double balance = sum > kEps ? 2.0 * std::min(rmsL, rmsR) / sum : 1.0;
+  return sum > kEps ? 2.0 * std::min(rmsL, rmsR) / sum : 1.0;
+}
+
+double CenterConfidence(const BandStats& b)
+{
+  const double corr = BandCorrelation(b);
+  const double balance = BandBalance(b);
+  const double positiveCorr = std::clamp((corr - 0.25) / 0.75, 0.0, 1.0);
+  return std::clamp(positiveCorr * balance, 0.0, 1.0);
+}
+
+double AmbienceScore(const BandStats& b)
+{
+  const double corr = BandCorrelation(b);
+  const double balance = BandBalance(b);
 
   const double sideFraction = b.eSide / (b.eMid + b.eSide + kEps);
   const double spatial = std::sqrt(std::clamp(sideFraction, 0.0, 1.0));
@@ -168,6 +185,7 @@ bool OhlMusicUpmixer::Init(const Params& params)
       !std::isfinite(params.ambienceHighWeight) || params.ambienceHighWeight < 0.0f ||
       !std::isfinite(params.ambienceAttackMs) || params.ambienceAttackMs <= 0.0f ||
       !std::isfinite(params.ambienceReleaseMs) || params.ambienceReleaseMs <= 0.0f ||
+      !std::isfinite(params.frontLock) || params.frontLock < 0.0f || params.frontLock > 1.0f ||
       !std::isfinite(params.directReject) || params.directReject < 0.0f ||
       params.directReject > 1.0f ||
       !std::isfinite(params.directThreshold) || params.directThreshold <= 1.0f ||
@@ -245,6 +263,7 @@ void OhlMusicUpmixer::Reset()
   gainInitialized_ = false;
   surroundAmount_ = 0.0f;
   lastCorrelation_ = 1.0f;
+  lastFrontLockConfidence_ = 0.0f;
 }
 
 void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* out51)
@@ -277,9 +296,7 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     full.Add(l, r);
   }
 
-  const double fullDenom = std::sqrt(full.eL * full.eR);
-  const double fullCorr =
-      fullDenom > kEps ? std::clamp(full.cross / fullDenom, -1.0, 1.0) : 1.0;
+  const double fullCorr = BandCorrelation(full);
   lastCorrelation_ = static_cast<float>(fullCorr);
 
   // Bass contributes little to rear steering. Mid/high diffuseness dominates because that is
@@ -316,12 +333,20 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const float centerConfidence =
       static_cast<float>(std::clamp((fullCorr - 0.35) / 0.65, 0.0, 1.0) * balance);
 
+  // Voice/body lock leans heavily on midband coherence, where lead vocals and other front-anchored
+  // fundamentals usually dominate. Diffuse tails tend to lose positive correlation and therefore
+  // fall out of this classifier naturally.
+  const double frontLockConfidence = std::clamp(
+      0.20 * CenterConfidence(full) + 0.80 * CenterConfidence(mid), 0.0, 1.0);
+  lastFrontLockConfidence_ = static_cast<float>(frontLockConfidence);
+  const float frontLockGain = static_cast<float>(
+      1.0 - static_cast<double>(params_.frontLock) * frontLockConfidence);
+
   for (size_t i = 0; i < frames; ++i)
   {
     const float l = stereo[2 * i];
     const float r = stereo[2 * i + 1];
     const float midSample = 0.5f * (l + r);
-    const float side = 0.5f * (l - r);
 
     // Detect a local direct event from the full programme envelope. This is deliberately
     // independent of the ambience analyser: a clap can be stereo/side-heavy yet still be a direct
@@ -334,12 +359,22 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
         std::clamp((ratio - params_.directThreshold) / 2.2f, 0.0f, 1.0f);
     const float directGain = 1.0f - params_.directReject * onset;
 
-    // v0.3 width is side-only. No common/mono programme is copied into the rear speakers.
-    // The base side feed prevents subtle stereo ambience from disappearing completely; the
-    // adaptive term opens further when the multiband analyser sees genuinely diffuse material.
-    const float rearGain = (params_.widthFloor + surroundAmount_) * directGain;
-    float rearL = rearLpL_.Process(rearHpL_.Process(side * rearGain));
-    float rearR = rearLpR_.Process(rearHpR_.Process(-side * rearGain));
+    // v0.5 rear topology:
+    //   1) estimate and subtract the coherent center independently from L and R,
+    //   2) keep each residual on its own side instead of forcing a mirrored +/- side pair,
+    //   3) attenuate residuals when the midband classifier says the programme is front-locked.
+    //
+    // A true centered mono source still collapses to zero residual. A left-heavy room reflection
+    // can now stay left-heavy behind the listener instead of being mirrored into both surrounds.
+    const float coherentCenter =
+        midSample * static_cast<float>(frontLockConfidence) * params_.frontLock;
+    const float residualL = l - coherentCenter;
+    const float residualR = r - coherentCenter;
+
+    const float rearGain =
+        (params_.widthFloor + surroundAmount_) * directGain * frontLockGain;
+    float rearL = rearLpL_.Process(rearHpL_.Process(residualL * rearGain));
+    float rearR = rearLpR_.Process(rearHpR_.Process(residualR * rearGain));
     rearL *= params_.rearLeftTrim;
     rearR *= params_.rearRightTrim;
 
