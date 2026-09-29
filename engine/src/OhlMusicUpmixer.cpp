@@ -366,8 +366,10 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     //
     // A true centered mono source still collapses to zero residual. A left-heavy room reflection
     // can now stay left-heavy behind the listener instead of being mirrored into both surrounds.
+    // Coherent-center subtraction is structural, not optional: even with Front Lock at 0,
+    // true mono/center content must not be manufactured into the rear channels.
     const float coherentCenter =
-        midSample * static_cast<float>(frontLockConfidence) * params_.frontLock;
+        midSample * static_cast<float>(frontLockConfidence);
     const float residualL = l - coherentCenter;
     const float residualR = r - coherentCenter;
 
