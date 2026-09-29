@@ -95,7 +95,7 @@ void LoadState(SettingsState& s)
 {
   const auto v = ReadValues(s.configPath);
   auto it = v.find("stereo_processing");
-  s.enabled = it == v.end() || it->second == "music";
+  s.enabled = it != v.end() && it->second == "music";
   s.ambience = ReadDouble(v, "music_surround_gain", s.ambience);
   s.width = ReadDouble(v, "music_width_floor", s.width);
   s.center = ReadDouble(v, "music_center_treble_gain", s.center);
@@ -143,12 +143,20 @@ bool WriteValues(const std::string& path, const std::map<std::string, std::strin
     }
   }
 
-  if (!lines.empty() && !lines.back().empty())
-    lines.push_back("");
-  lines.push_back("# OHL Music settings (managed by the native settings UI)");
+  bool haveMissing = false;
   for (const auto& kv : values)
     if (!seen[kv.first])
-      lines.push_back(kv.first + "=" + kv.second);
+      haveMissing = true;
+
+  if (haveMissing)
+  {
+    if (!lines.empty() && !lines.back().empty())
+      lines.push_back("");
+    lines.push_back("# OHL Music settings (managed by the native settings UI)");
+    for (const auto& kv : values)
+      if (!seen[kv.first])
+        lines.push_back(kv.first + "=" + kv.second);
+  }
 
   const std::string tmp = path + ".ohl-tmp";
   {
