@@ -304,8 +304,6 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       SendMessageW(amb, TBM_SETRANGE, TRUE, MAKELPARAM(0, 120));
       SendMessageW(amb, TBM_SETPOS, TRUE,
                    static_cast<LPARAM>(std::lround(state->ambience * 100.0)));
-      Label(hwnd, L"", 525, 122, 70, 23)->operator HWND();
-
       Label(hwnd, L"Always-on width", 22, 162, 160, 23);
       HWND width = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
                                  175, 156, 340, 34, hwnd,
