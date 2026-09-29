@@ -163,11 +163,22 @@ bool OhlMusicUpmixer::Init(const Params& params)
   if (params.sampleRate <= 0 ||
       !std::isfinite(params.surroundGain) || params.surroundGain < 0.0f ||
       !std::isfinite(params.widthFloor) || params.widthFloor < 0.0f ||
+      !std::isfinite(params.ambienceLowWeight) || params.ambienceLowWeight < 0.0f ||
+      !std::isfinite(params.ambienceMidWeight) || params.ambienceMidWeight < 0.0f ||
+      !std::isfinite(params.ambienceHighWeight) || params.ambienceHighWeight < 0.0f ||
+      !std::isfinite(params.ambienceAttackMs) || params.ambienceAttackMs <= 0.0f ||
+      !std::isfinite(params.ambienceReleaseMs) || params.ambienceReleaseMs <= 0.0f ||
       !std::isfinite(params.directReject) || params.directReject < 0.0f ||
       params.directReject > 1.0f ||
+      !std::isfinite(params.directThreshold) || params.directThreshold <= 1.0f ||
+      !std::isfinite(params.directRecoveryMs) || params.directRecoveryMs <= 0.0f ||
       !std::isfinite(params.centerTrebleGain) || params.centerTrebleGain < 0.0f ||
       !std::isfinite(params.centerTrebleHz) || params.centerTrebleHz < 0.0f ||
-      !std::isfinite(params.rearHighpassHz) || params.rearHighpassHz < 0.0f)
+      !std::isfinite(params.centerLowpassHz) || params.centerLowpassHz <= 0.0f ||
+      !std::isfinite(params.rearHighpassHz) || params.rearHighpassHz < 0.0f ||
+      !std::isfinite(params.rearLowpassHz) || params.rearLowpassHz <= 0.0f ||
+      !std::isfinite(params.rearLeftTrim) || params.rearLeftTrim < 0.0f ||
+      !std::isfinite(params.rearRightTrim) || params.rearRightTrim < 0.0f)
     return false;
 
   params_ = params;
@@ -199,11 +210,14 @@ bool OhlMusicUpmixer::Init(const Params& params)
 
   rearHpL_.Configure(params_.rearHighpassHz, params_.sampleRate);
   rearHpR_.Configure(params_.rearHighpassHz, params_.sampleRate);
+  rearLpL_.Configure(params_.rearLowpassHz, params_.sampleRate);
+  rearLpR_.Configure(params_.rearLowpassHz, params_.sampleRate);
   centerHp_.Configure(params_.centerTrebleHz, params_.sampleRate);
+  centerLp_.Configure(params_.centerLowpassHz, params_.sampleRate);
 
   // Local onset detector: fast follows the attack, slow estimates the surrounding programme.
-  // It changes rear gain sample-by-sample, never the entire 32 ms AC3 packet.
-  eventFast_.Configure(0.6f, 18.0f, params_.sampleRate);
+  // The fast release is user-tunable so clap/snare rejection can be made tighter or softer.
+  eventFast_.Configure(0.6f, params_.directRecoveryMs, params_.sampleRate);
   eventSlow_.Configure(28.0f, 220.0f, params_.sampleRate);
 
   Reset();
@@ -221,7 +235,10 @@ void OhlMusicUpmixer::Reset()
   analysisMidR_.Reset();
   rearHpL_.Reset();
   rearHpR_.Reset();
+  rearLpL_.Reset();
+  rearLpR_.Reset();
   centerHp_.Reset();
+  centerLp_.Reset();
   eventFast_.Reset();
   eventSlow_.Reset();
 
@@ -267,10 +284,11 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
 
   // Bass contributes little to rear steering. Mid/high diffuseness dominates because that is
   // where room tone, doubled parts, stereo effects and reverberant tails usually live.
-  const double ambience =
-      0.08 * AmbienceScore(low) +
-      0.46 * AmbienceScore(mid) +
-      0.46 * AmbienceScore(high);
+  const double ambience = std::clamp(
+      static_cast<double>(params_.ambienceLowWeight) * AmbienceScore(low) +
+      static_cast<double>(params_.ambienceMidWeight) * AmbienceScore(mid) +
+      static_cast<double>(params_.ambienceHighWeight) * AmbienceScore(high),
+      0.0, 1.0);
 
   float target = static_cast<float>(params_.surroundGain * ambience);
   target = std::clamp(target, 0.0f, params_.surroundGain);
@@ -282,8 +300,13 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   }
   else
   {
-    const float alpha = target > surroundAmount_ ? 0.28f : 0.06f;
-    surroundAmount_ += alpha * (target - surroundAmount_);
+    const double packetMs =
+        1000.0 * static_cast<double>(frames) / static_cast<double>(params_.sampleRate);
+    const double tauMs = target > surroundAmount_
+        ? static_cast<double>(params_.ambienceAttackMs)
+        : static_cast<double>(params_.ambienceReleaseMs);
+    const float alpha = static_cast<float>(1.0 - std::exp(-packetMs / tauMs));
+    surroundAmount_ += std::clamp(alpha, 0.0f, 1.0f) * (target - surroundAmount_);
   }
 
   const double rmsL = std::sqrt(full.eL);
@@ -307,18 +330,22 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float fast = eventFast_.Process(eventSignal);
     const float slow = eventSlow_.Process(eventSignal);
     const float ratio = fast / (slow + 1.0e-5f);
-    const float onset = std::clamp((ratio - 1.45f) / 2.2f, 0.0f, 1.0f);
+    const float onset =
+        std::clamp((ratio - params_.directThreshold) / 2.2f, 0.0f, 1.0f);
     const float directGain = 1.0f - params_.directReject * onset;
 
     // v0.3 width is side-only. No common/mono programme is copied into the rear speakers.
     // The base side feed prevents subtle stereo ambience from disappearing completely; the
     // adaptive term opens further when the multiband analyser sees genuinely diffuse material.
     const float rearGain = (params_.widthFloor + surroundAmount_) * directGain;
-    float rearL = rearHpL_.Process(side * rearGain);
-    float rearR = rearHpR_.Process(-side * rearGain);
+    float rearL = rearLpL_.Process(rearHpL_.Process(side * rearGain));
+    float rearR = rearLpR_.Process(rearHpR_.Process(-side * rearGain));
+    rearL *= params_.rearLeftTrim;
+    rearR *= params_.rearRightTrim;
 
+    const float centerBand = centerLp_.Process(centerHp_.Process(midSample));
     const float center =
-        params_.centerTrebleGain * centerConfidence * centerHp_.Process(midSample);
+        params_.centerTrebleGain * centerConfidence * centerBand;
 
     const float raw[kChannels] = {
         l,
