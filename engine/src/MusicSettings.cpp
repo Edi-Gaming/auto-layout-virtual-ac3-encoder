@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <map>
@@ -262,7 +263,7 @@ HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h)
 HWND Edit(HWND parent, int id, int x, int y, int w)
 {
   HWND c = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                           WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER,
+                           WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
                            x, y, w, 25, parent, reinterpret_cast<HMENU>(id), nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
   return c;
