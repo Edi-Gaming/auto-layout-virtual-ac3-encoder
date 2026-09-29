@@ -394,6 +394,110 @@ TEST_CASE("OHL Music center low-pass bounds the sparkle band")
   CHECK(presenceCenter > extremeCenter * 1.5);
 }
 
+
+TEST_CASE("OHL Music v0.5 front lock suppresses correlated vocal-like stereo residue")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float vocal =
+        0.30f * static_cast<float>(std::sin(2.0 * kPi * 1000.0 * tt));
+    const float stereoResidue =
+        0.045f * static_cast<float>(std::sin(2.0 * kPi * 1450.0 * tt));
+    in[2 * i] = vocal + stereoResidue;
+    in[2 * i + 1] = vocal - stereoResidue;
+  }
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 0.0f;
+  p.widthFloor = 0.28f;
+  p.directReject = 0.0f;
+  p.rearHighpassHz = 80.0f;
+  p.rearLowpassHz = 18000.0f;
+
+  OhlMusicUpmixer unlocked;
+  p.frontLock = 0.0f;
+  REQUIRE(unlocked.Init(p));
+  std::vector<float> unlockedOut(frames * 6, 0.0f);
+  unlocked.ProcessStereo(in.data(), frames, unlockedOut.data());
+
+  OhlMusicUpmixer locked;
+  p.frontLock = 0.95f;
+  REQUIRE(locked.Init(p));
+  std::vector<float> lockedOut(frames * 6, 0.0f);
+  locked.ProcessStereo(in.data(), frames, lockedOut.data());
+
+  const double unlockedRear =
+      0.5 * (ChannelRms(unlockedOut, 4, 512) + ChannelRms(unlockedOut, 5, 512));
+  const double lockedRear =
+      0.5 * (ChannelRms(lockedOut, 4, 512) + ChannelRms(lockedOut, 5, 512));
+
+  MESSAGE("front-lock vocal-like rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
+  CHECK(unlockedRear > 0.003);
+  CHECK(lockedRear < unlockedRear * 0.35);
+}
+
+TEST_CASE("OHL Music v0.5 front lock leaves decorrelated ambience essentially untouched")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 5200.0, true);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.12f;
+  p.surroundGain = 0.70f;
+  p.directReject = 0.0f;
+
+  OhlMusicUpmixer unlocked;
+  p.frontLock = 0.0f;
+  REQUIRE(unlocked.Init(p));
+  std::vector<float> unlockedOut(frames * 6, 0.0f);
+  unlocked.ProcessStereo(in.data(), frames, unlockedOut.data());
+
+  OhlMusicUpmixer locked;
+  p.frontLock = 1.0f;
+  REQUIRE(locked.Init(p));
+  std::vector<float> lockedOut(frames * 6, 0.0f);
+  locked.ProcessStereo(in.data(), frames, lockedOut.data());
+
+  const double unlockedRear =
+      0.5 * (ChannelRms(unlockedOut, 4, 512) + ChannelRms(unlockedOut, 5, 512));
+  const double lockedRear =
+      0.5 * (ChannelRms(lockedOut, 4, 512) + ChannelRms(lockedOut, 5, 512));
+
+  MESSAGE("decorrelated rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
+  CHECK(unlockedRear > 0.05);
+  CHECK(std::fabs(lockedRear - unlockedRear) < unlockedRear * 0.03);
+}
+
+TEST_CASE("OHL Music v0.5 preserves rear asymmetry instead of mirroring side energy")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 2600.0, false, false);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 0.0f;
+  p.widthFloor = 0.25f;
+  p.frontLock = 0.90f;
+  p.directReject = 0.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double left = ChannelRms(out, 4, 512);
+  const double right = ChannelRms(out, 5, 512);
+  MESSAGE("asymmetric residual rear RMS left=" << left << " right=" << right);
+
+  CHECK(left > 0.03);
+  CHECK(right < left * 0.05);
+}
+
 TEST_CASE("OHL Music applies speaker-distance delay after spatial extraction")
 {
   constexpr size_t frames = 128;
