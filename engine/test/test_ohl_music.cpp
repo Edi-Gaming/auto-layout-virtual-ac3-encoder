@@ -245,9 +245,10 @@ TEST_CASE("OHL Music center sparkle strongly favors treble over low-frequency ce
 }
 
 
-TEST_CASE("OHL Music ambience band weights can favor high-frequency spatial detail")
+TEST_CASE("OHL Music ambience band weights control high-frequency spatial extraction")
 {
   constexpr size_t frames = 1536;
+  const auto highIn = MakeSineStereo(frames, 7000.0, true);
 
   auto p = EqualDistanceParams();
   p.centerTrebleGain = 0.0f;
@@ -257,23 +258,25 @@ TEST_CASE("OHL Music ambience band weights can favor high-frequency spatial deta
   p.ambienceMidWeight = 0.0f;
   p.ambienceHighWeight = 1.0f;
 
-  OhlMusicUpmixer highMixer;
-  REQUIRE(highMixer.Init(p));
-  const auto highIn = MakeSineStereo(frames, 7000.0, true);
-  std::vector<float> highOut(frames * 6, 0.0f);
-  highMixer.ProcessStereo(highIn.data(), frames, highOut.data());
+  OhlMusicUpmixer enabled;
+  REQUIRE(enabled.Init(p));
+  std::vector<float> enabledOut(frames * 6, 0.0f);
+  enabled.ProcessStereo(highIn.data(), frames, enabledOut.data());
 
-  OhlMusicUpmixer midMixer;
-  REQUIRE(midMixer.Init(p));
-  const auto midIn = MakeSineStereo(frames, 1000.0, true);
-  std::vector<float> midOut(frames * 6, 0.0f);
-  midMixer.ProcessStereo(midIn.data(), frames, midOut.data());
+  p.ambienceHighWeight = 0.0f;
+  OhlMusicUpmixer disabled;
+  REQUIRE(disabled.Init(p));
+  std::vector<float> disabledOut(frames * 6, 0.0f);
+  disabled.ProcessStereo(highIn.data(), frames, disabledOut.data());
 
-  const double highRear = 0.5 * (ChannelRms(highOut, 4) + ChannelRms(highOut, 5));
-  const double midRear = 0.5 * (ChannelRms(midOut, 4) + ChannelRms(midOut, 5));
+  const double enabledRear =
+      0.5 * (ChannelRms(enabledOut, 4) + ChannelRms(enabledOut, 5));
+  const double disabledRear =
+      0.5 * (ChannelRms(disabledOut, 4) + ChannelRms(disabledOut, 5));
 
-  MESSAGE("high-weight rear RMS high=" << highRear << " mid=" << midRear);
-  CHECK(highRear > midRear * 1.8);
+  MESSAGE("high-band enabled rear RMS=" << enabledRear << " disabled=" << disabledRear);
+  CHECK(enabledRear > 0.05);
+  CHECK(disabledRear < 1.0e-6);
 }
 
 TEST_CASE("OHL Music ambience attack time controls how quickly the rear opens")
