@@ -244,6 +244,153 @@ TEST_CASE("OHL Music center sparkle strongly favors treble over low-frequency ce
   CHECK(highCenter > 4.0 * lowCenter);
 }
 
+
+TEST_CASE("OHL Music ambience band weights can favor high-frequency spatial detail")
+{
+  constexpr size_t frames = 1536;
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.0f;
+  p.directReject = 0.0f;
+  p.ambienceLowWeight = 0.0f;
+  p.ambienceMidWeight = 0.0f;
+  p.ambienceHighWeight = 1.0f;
+
+  OhlMusicUpmixer highMixer;
+  REQUIRE(highMixer.Init(p));
+  const auto highIn = MakeSineStereo(frames, 7000.0, true);
+  std::vector<float> highOut(frames * 6, 0.0f);
+  highMixer.ProcessStereo(highIn.data(), frames, highOut.data());
+
+  OhlMusicUpmixer midMixer;
+  REQUIRE(midMixer.Init(p));
+  const auto midIn = MakeSineStereo(frames, 1000.0, true);
+  std::vector<float> midOut(frames * 6, 0.0f);
+  midMixer.ProcessStereo(midIn.data(), frames, midOut.data());
+
+  const double highRear = 0.5 * (ChannelRms(highOut, 4) + ChannelRms(highOut, 5));
+  const double midRear = 0.5 * (ChannelRms(midOut, 4) + ChannelRms(midOut, 5));
+
+  MESSAGE("high-weight rear RMS high=" << highRear << " mid=" << midRear);
+  CHECK(highRear > midRear * 1.8);
+}
+
+TEST_CASE("OHL Music ambience attack time controls how quickly the rear opens")
+{
+  constexpr size_t frames = 1536;
+  const auto mono = MakeSineStereo(frames, 1000.0, false);
+  const auto diffuse = MakeSineStereo(frames, 2500.0, true);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.0f;
+  p.directReject = 0.0f;
+
+  OhlMusicUpmixer fast;
+  p.ambienceAttackMs = 20.0f;
+  REQUIRE(fast.Init(p));
+  std::vector<float> scratch(frames * 6, 0.0f);
+  fast.ProcessStereo(mono.data(), frames, scratch.data());
+  std::vector<float> fastOut(frames * 6, 0.0f);
+  fast.ProcessStereo(diffuse.data(), frames, fastOut.data());
+
+  OhlMusicUpmixer slow;
+  p.ambienceAttackMs = 1200.0f;
+  REQUIRE(slow.Init(p));
+  std::fill(scratch.begin(), scratch.end(), 0.0f);
+  slow.ProcessStereo(mono.data(), frames, scratch.data());
+  std::vector<float> slowOut(frames * 6, 0.0f);
+  slow.ProcessStereo(diffuse.data(), frames, slowOut.data());
+
+  const double fastRear = 0.5 * (ChannelRms(fastOut, 4) + ChannelRms(fastOut, 5));
+  const double slowRear = 0.5 * (ChannelRms(slowOut, 4) + ChannelRms(slowOut, 5));
+
+  MESSAGE("attack fast rear RMS=" << fastRear << " slow=" << slowRear);
+  CHECK(fastRear > slowRear * 2.0);
+}
+
+TEST_CASE("OHL Music rear trims independently balance SL and SR")
+{
+  constexpr size_t frames = 1536;
+  const auto in = MakeSineStereo(frames, 2400.0, true);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  p.rearLeftTrim = 0.50f;
+  p.rearRightTrim = 1.50f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double left = ChannelRms(out, 4, 128);
+  const double right = ChannelRms(out, 5, 128);
+  MESSAGE("rear trims left=" << left << " right=" << right);
+  CHECK(right > left * 2.5);
+  CHECK(right < left * 3.5);
+}
+
+TEST_CASE("OHL Music rear low-pass can darken high-frequency surround detail")
+{
+  constexpr size_t frames = 4096;
+  const auto highIn = MakeSineStereo(frames, 9000.0, true);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+
+  OhlMusicUpmixer open;
+  p.rearLowpassHz = 20000.0f;
+  REQUIRE(open.Init(p));
+  std::vector<float> openOut(frames * 6, 0.0f);
+  open.ProcessStereo(highIn.data(), frames, openOut.data());
+
+  OhlMusicUpmixer dark;
+  p.rearLowpassHz = 2500.0f;
+  REQUIRE(dark.Init(p));
+  std::vector<float> darkOut(frames * 6, 0.0f);
+  dark.ProcessStereo(highIn.data(), frames, darkOut.data());
+
+  const double openRear = 0.5 * (ChannelRms(openOut, 4, 512) + ChannelRms(openOut, 5, 512));
+  const double darkRear = 0.5 * (ChannelRms(darkOut, 4, 512) + ChannelRms(darkOut, 5, 512));
+
+  MESSAGE("rear LP open=" << openRear << " dark=" << darkRear);
+  CHECK(openRear > darkRear * 2.0);
+}
+
+TEST_CASE("OHL Music center low-pass bounds the sparkle band")
+{
+  constexpr size_t frames = 4096;
+
+  auto p = EqualDistanceParams();
+  p.widthFloor = 0.0f;
+  p.surroundGain = 0.0f;
+  p.centerTrebleGain = 0.40f;
+  p.centerTrebleHz = 2000.0f;
+  p.centerLowpassHz = 5000.0f;
+
+  OhlMusicUpmixer presence;
+  REQUIRE(presence.Init(p));
+  const auto presenceIn = MakeSineStereo(frames, 3500.0, false);
+  std::vector<float> presenceOut(frames * 6, 0.0f);
+  presence.ProcessStereo(presenceIn.data(), frames, presenceOut.data());
+
+  OhlMusicUpmixer extreme;
+  REQUIRE(extreme.Init(p));
+  const auto extremeIn = MakeSineStereo(frames, 14000.0, false);
+  std::vector<float> extremeOut(frames * 6, 0.0f);
+  extreme.ProcessStereo(extremeIn.data(), frames, extremeOut.data());
+
+  const double presenceCenter = ChannelRms(presenceOut, 2, 512);
+  const double extremeCenter = ChannelRms(extremeOut, 2, 512);
+
+  MESSAGE("center band presence=" << presenceCenter << " extreme=" << extremeCenter);
+  CHECK(presenceCenter > extremeCenter * 1.5);
+}
+
 TEST_CASE("OHL Music applies speaker-distance delay after spatial extraction")
 {
   constexpr size_t frames = 128;
