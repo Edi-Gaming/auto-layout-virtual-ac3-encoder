@@ -20,39 +20,84 @@ namespace {
 
 constexpr wchar_t kClassName[] = L"OhlMusicSettingsWindow";
 
-constexpr int kEnable = 3001;
-constexpr int kAmbience = 3002;
-constexpr int kWidth = 3003;
-constexpr int kCenter = 3004;
-constexpr int kAmbienceValue = 3005;
-constexpr int kWidthValue = 3006;
-constexpr int kCenterValue = 3007;
-constexpr int kCenterHz = 3008;
-constexpr int kRearHz = 3009;
-constexpr int kFl = 3010;
-constexpr int kC = 3011;
-constexpr int kFr = 3012;
-constexpr int kSl = 3013;
-constexpr int kSr = 3014;
-constexpr int kApply = 3015;
-constexpr int kStatus = 3016;
-constexpr int kReject = 3017;
-constexpr int kRejectValue = 3018;
+enum ControlId
+{
+  kEnable = 3001,
+  kAmbience,
+  kWidth,
+  kReject,
+  kCenter,
+
+  kAmbienceValue,
+  kWidthValue,
+  kRejectValue,
+  kCenterValue,
+
+  kLowWeight,
+  kMidWeight,
+  kHighWeight,
+  kLowWeightValue,
+  kMidWeightValue,
+  kHighWeightValue,
+
+  kAmbienceAttack,
+  kAmbienceRelease,
+  kDirectThreshold,
+  kDirectRecovery,
+
+  kCenterHp,
+  kCenterLp,
+  kRearHp,
+  kRearLp,
+  kRearLeftTrim,
+  kRearRightTrim,
+
+  kFl,
+  kC,
+  kFr,
+  kSl,
+  kSr,
+
+  kPresetNatural,
+  kPresetWide,
+  kPresetAmbient,
+  kPresetV03,
+  kReload,
+  kApply,
+  kStatus
+};
 
 HBRUSH gBg = nullptr;
 HFONT gTitleFont = nullptr;
 HFONT gUiFont = nullptr;
+HFONT gSmallFont = nullptr;
 
 struct SettingsState
 {
   std::string configPath;
   bool enabled = true;
+
   double ambience = 0.70;
   double width = 0.16;
+  double lowWeight = 0.08;
+  double midWeight = 0.46;
+  double highWeight = 0.46;
+  double ambienceAttackMs = 100.0;
+  double ambienceReleaseMs = 520.0;
+
   double directReject = 0.78;
+  double directThreshold = 1.45;
+  double directRecoveryMs = 18.0;
+
   double center = 0.18;
-  double centerHz = 2400.0;
-  double rearHz = 160.0;
+  double centerHp = 2400.0;
+  double centerLp = 16000.0;
+
+  double rearHp = 160.0;
+  double rearLp = 18000.0;
+  double rearLeftTrim = 1.0;
+  double rearRightTrim = 1.0;
+
   double fl = 33.0;
   double c = 30.0;
   double fr = 33.0;
@@ -75,7 +120,7 @@ std::map<std::string, std::string> ReadValues(const std::string& path)
   std::string line;
   while (std::getline(f, line))
   {
-    std::string s = Trim(line);
+    const std::string s = Trim(line);
     if (s.empty() || s[0] == '#' || s[0] == ';') continue;
     const size_t eq = s.find('=');
     if (eq == std::string::npos) continue;
@@ -100,12 +145,28 @@ void LoadState(SettingsState& s)
   const auto v = ReadValues(s.configPath);
   auto it = v.find("stereo_processing");
   s.enabled = it != v.end() && it->second == "music";
+
   s.ambience = ReadDouble(v, "music_surround_gain", s.ambience);
   s.width = ReadDouble(v, "music_width_floor", s.width);
+  s.lowWeight = ReadDouble(v, "music_ambience_low_weight", s.lowWeight);
+  s.midWeight = ReadDouble(v, "music_ambience_mid_weight", s.midWeight);
+  s.highWeight = ReadDouble(v, "music_ambience_high_weight", s.highWeight);
+  s.ambienceAttackMs = ReadDouble(v, "music_ambience_attack_ms", s.ambienceAttackMs);
+  s.ambienceReleaseMs = ReadDouble(v, "music_ambience_release_ms", s.ambienceReleaseMs);
+
   s.directReject = ReadDouble(v, "music_direct_reject", s.directReject);
+  s.directThreshold = ReadDouble(v, "music_direct_threshold", s.directThreshold);
+  s.directRecoveryMs = ReadDouble(v, "music_direct_recovery_ms", s.directRecoveryMs);
+
   s.center = ReadDouble(v, "music_center_treble_gain", s.center);
-  s.centerHz = ReadDouble(v, "music_center_treble_hz", s.centerHz);
-  s.rearHz = ReadDouble(v, "music_rear_highpass_hz", s.rearHz);
+  s.centerHp = ReadDouble(v, "music_center_treble_hz", s.centerHp);
+  s.centerLp = ReadDouble(v, "music_center_lowpass_hz", s.centerLp);
+
+  s.rearHp = ReadDouble(v, "music_rear_highpass_hz", s.rearHp);
+  s.rearLp = ReadDouble(v, "music_rear_lowpass_hz", s.rearLp);
+  s.rearLeftTrim = ReadDouble(v, "music_rear_left_trim", s.rearLeftTrim);
+  s.rearRightTrim = ReadDouble(v, "music_rear_right_trim", s.rearRightTrim);
+
   s.fl = ReadDouble(v, "music_distance_fl_in", s.fl);
   s.c = ReadDouble(v, "music_distance_c_in", s.c);
   s.fr = ReadDouble(v, "music_distance_fr_in", s.fr);
@@ -181,6 +242,61 @@ bool WriteValues(const std::string& path, const std::map<std::string, std::strin
   return true;
 }
 
+HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool small = false)
+{
+  HWND c = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE,
+                         x, y, w, h, parent, nullptr, nullptr, nullptr);
+  SendMessageW(c, WM_SETFONT,
+               reinterpret_cast<WPARAM>(small ? gSmallFont : gUiFont), TRUE);
+  return c;
+}
+
+HWND Group(HWND parent, const wchar_t* text, int x, int y, int w, int h)
+{
+  HWND c = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+                         x, y, w, h, parent, nullptr, nullptr, nullptr);
+  SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+  return c;
+}
+
+HWND Edit(HWND parent, int id, int x, int y, int w)
+{
+  HWND c = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                           WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+                           x, y, w, 24, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                           nullptr, nullptr);
+  SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+  return c;
+}
+
+HWND Slider(HWND parent, int id, int x, int y, int w, int maxValue, int pos)
+{
+  HWND c = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
+                         x, y, w, 32, parent,
+                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+  SendMessageW(c, TBM_SETRANGE, TRUE, MAKELPARAM(0, maxValue));
+  SendMessageW(c, TBM_SETPOS, TRUE, pos);
+  return c;
+}
+
+HWND ValueLabel(HWND parent, int id, int x, int y, int w = 62)
+{
+  HWND c = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
+                         x, y, w, 22, parent,
+                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+  SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+  return c;
+}
+
+HWND Button(HWND parent, int id, const wchar_t* text, int x, int y, int w, int h = 30)
+{
+  HWND c = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                         x, y, w, h, parent,
+                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+  SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+  return c;
+}
+
 void SetDoubleEdit(HWND hwnd, int id, double value, int precision = 1)
 {
   const std::string s = Fmt(value, precision);
@@ -196,51 +312,212 @@ double GetDoubleEdit(HWND hwnd, int id, double fallback)
   return (end && end != buf && std::isfinite(x)) ? x : fallback;
 }
 
+int PercentToSlider(double x) { return static_cast<int>(std::lround(x * 100.0)); }
+
 void UpdateSliderLabels(HWND hwnd)
 {
-  const int a = static_cast<int>(SendDlgItemMessageW(hwnd, kAmbience, TBM_GETPOS, 0, 0));
-  const int w = static_cast<int>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0));
-  const int d = static_cast<int>(SendDlgItemMessageW(hwnd, kReject, TBM_GETPOS, 0, 0));
-  const int c = static_cast<int>(SendDlgItemMessageW(hwnd, kCenter, TBM_GETPOS, 0, 0));
+  const auto pct = [&](int slider, int label) {
+    const int v = static_cast<int>(SendDlgItemMessageW(hwnd, slider, TBM_GETPOS, 0, 0));
+    const std::wstring s = std::to_wstring(v) + L"%";
+    SetDlgItemTextW(hwnd, label, s.c_str());
+  };
+  pct(kAmbience, kAmbienceValue);
+  pct(kWidth, kWidthValue);
+  pct(kReject, kRejectValue);
+  pct(kCenter, kCenterValue);
+  pct(kLowWeight, kLowWeightValue);
+  pct(kMidWeight, kMidWeightValue);
+  pct(kHighWeight, kHighWeightValue);
+}
 
-  const std::wstring av = std::to_wstring(a) + L"%";
-  const std::wstring wv = std::to_wstring(w) + L"%";
-  const std::wstring dv = std::to_wstring(d) + L"%";
-  const std::wstring cv = std::to_wstring(c) + L"%";
-  SetDlgItemTextW(hwnd, kAmbienceValue, av.c_str());
-  SetDlgItemTextW(hwnd, kWidthValue, wv.c_str());
-  SetDlgItemTextW(hwnd, kRejectValue, dv.c_str());
-  SetDlgItemTextW(hwnd, kCenterValue, cv.c_str());
+void PushStateToControls(HWND hwnd, const SettingsState& s)
+{
+  CheckDlgButton(hwnd, kEnable, s.enabled ? BST_CHECKED : BST_UNCHECKED);
+
+  SendDlgItemMessageW(hwnd, kAmbience, TBM_SETPOS, TRUE, PercentToSlider(s.ambience));
+  SendDlgItemMessageW(hwnd, kWidth, TBM_SETPOS, TRUE, PercentToSlider(s.width));
+  SendDlgItemMessageW(hwnd, kReject, TBM_SETPOS, TRUE, PercentToSlider(s.directReject));
+  SendDlgItemMessageW(hwnd, kCenter, TBM_SETPOS, TRUE, PercentToSlider(s.center));
+
+  SendDlgItemMessageW(hwnd, kLowWeight, TBM_SETPOS, TRUE, PercentToSlider(s.lowWeight));
+  SendDlgItemMessageW(hwnd, kMidWeight, TBM_SETPOS, TRUE, PercentToSlider(s.midWeight));
+  SendDlgItemMessageW(hwnd, kHighWeight, TBM_SETPOS, TRUE, PercentToSlider(s.highWeight));
+
+  SetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs, 0);
+  SetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs, 0);
+  SetDoubleEdit(hwnd, kDirectThreshold, s.directThreshold, 2);
+  SetDoubleEdit(hwnd, kDirectRecovery, s.directRecoveryMs, 0);
+
+  SetDoubleEdit(hwnd, kCenterHp, s.centerHp, 0);
+  SetDoubleEdit(hwnd, kCenterLp, s.centerLp, 0);
+  SetDoubleEdit(hwnd, kRearHp, s.rearHp, 0);
+  SetDoubleEdit(hwnd, kRearLp, s.rearLp, 0);
+  SetDoubleEdit(hwnd, kRearLeftTrim, s.rearLeftTrim, 2);
+  SetDoubleEdit(hwnd, kRearRightTrim, s.rearRightTrim, 2);
+
+  SetDoubleEdit(hwnd, kFl, s.fl);
+  SetDoubleEdit(hwnd, kC, s.c);
+  SetDoubleEdit(hwnd, kFr, s.fr);
+  SetDoubleEdit(hwnd, kSl, s.sl);
+  SetDoubleEdit(hwnd, kSr, s.sr);
+
+  UpdateSliderLabels(hwnd);
+}
+
+void PullControlsToState(HWND hwnd, SettingsState& s)
+{
+  s.enabled = IsDlgButtonChecked(hwnd, kEnable) == BST_CHECKED;
+  s.ambience =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kAmbience, TBM_GETPOS, 0, 0)) / 100.0;
+  s.width =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0)) / 100.0;
+  s.directReject =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kReject, TBM_GETPOS, 0, 0)) / 100.0;
+  s.center =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kCenter, TBM_GETPOS, 0, 0)) / 100.0;
+
+  s.lowWeight =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kLowWeight, TBM_GETPOS, 0, 0)) / 100.0;
+  s.midWeight =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kMidWeight, TBM_GETPOS, 0, 0)) / 100.0;
+  s.highWeight =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kHighWeight, TBM_GETPOS, 0, 0)) / 100.0;
+
+  s.ambienceAttackMs = std::clamp(GetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs), 5.0, 5000.0);
+  s.ambienceReleaseMs = std::clamp(GetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs), 10.0, 10000.0);
+  s.directThreshold = std::clamp(GetDoubleEdit(hwnd, kDirectThreshold, s.directThreshold), 1.01, 8.0);
+  s.directRecoveryMs = std::clamp(GetDoubleEdit(hwnd, kDirectRecovery, s.directRecoveryMs), 1.0, 500.0);
+
+  s.centerHp = std::clamp(GetDoubleEdit(hwnd, kCenterHp, s.centerHp), 200.0, 12000.0);
+  s.centerLp = std::clamp(GetDoubleEdit(hwnd, kCenterLp, s.centerLp), 1000.0, 24000.0);
+  if (s.centerLp <= s.centerHp) s.centerLp = std::min(24000.0, s.centerHp + 500.0);
+
+  s.rearHp = std::clamp(GetDoubleEdit(hwnd, kRearHp, s.rearHp), 0.0, 2000.0);
+  s.rearLp = std::clamp(GetDoubleEdit(hwnd, kRearLp, s.rearLp), 1000.0, 24000.0);
+  if (s.rearLp <= s.rearHp) s.rearLp = std::min(24000.0, s.rearHp + 500.0);
+
+  s.rearLeftTrim = std::clamp(GetDoubleEdit(hwnd, kRearLeftTrim, s.rearLeftTrim), 0.0, 2.0);
+  s.rearRightTrim = std::clamp(GetDoubleEdit(hwnd, kRearRightTrim, s.rearRightTrim), 0.0, 2.0);
+
+  s.fl = std::clamp(GetDoubleEdit(hwnd, kFl, s.fl), 0.0, 300.0);
+  s.c = std::clamp(GetDoubleEdit(hwnd, kC, s.c), 0.0, 300.0);
+  s.fr = std::clamp(GetDoubleEdit(hwnd, kFr, s.fr), 0.0, 300.0);
+  s.sl = std::clamp(GetDoubleEdit(hwnd, kSl, s.sl), 0.0, 300.0);
+  s.sr = std::clamp(GetDoubleEdit(hwnd, kSr, s.sr), 0.0, 300.0);
+}
+
+void SetPreset(SettingsState& s, int preset)
+{
+  // Geometry is intentionally never changed by a sound preset.
+  switch (preset)
+  {
+    case kPresetNatural:
+      s.ambience = 0.56;
+      s.width = 0.11;
+      s.lowWeight = 0.03;
+      s.midWeight = 0.44;
+      s.highWeight = 0.53;
+      s.ambienceAttackMs = 125;
+      s.ambienceReleaseMs = 650;
+      s.directReject = 0.88;
+      s.directThreshold = 1.35;
+      s.directRecoveryMs = 14;
+      s.center = 0.12;
+      s.centerHp = 2800;
+      s.centerLp = 11500;
+      s.rearHp = 190;
+      s.rearLp = 12000;
+      s.rearLeftTrim = 1.0;
+      s.rearRightTrim = 1.0;
+      break;
+
+    case kPresetWide:
+      s.ambience = 0.72;
+      s.width = 0.22;
+      s.lowWeight = 0.05;
+      s.midWeight = 0.45;
+      s.highWeight = 0.50;
+      s.ambienceAttackMs = 90;
+      s.ambienceReleaseMs = 520;
+      s.directReject = 0.82;
+      s.directThreshold = 1.45;
+      s.directRecoveryMs = 18;
+      s.center = 0.15;
+      s.centerHp = 2500;
+      s.centerLp = 14500;
+      s.rearHp = 160;
+      s.rearLp = 15000;
+      s.rearLeftTrim = 1.0;
+      s.rearRightTrim = 1.0;
+      break;
+
+    case kPresetAmbient:
+      s.ambience = 0.86;
+      s.width = 0.09;
+      s.lowWeight = 0.02;
+      s.midWeight = 0.36;
+      s.highWeight = 0.62;
+      s.ambienceAttackMs = 170;
+      s.ambienceReleaseMs = 900;
+      s.directReject = 0.94;
+      s.directThreshold = 1.22;
+      s.directRecoveryMs = 11;
+      s.center = 0.09;
+      s.centerHp = 3200;
+      s.centerLp = 10000;
+      s.rearHp = 220;
+      s.rearLp = 9500;
+      s.rearLeftTrim = 1.0;
+      s.rearRightTrim = 1.0;
+      break;
+
+    case kPresetV03:
+    default:
+      s.ambience = 0.70;
+      s.width = 0.16;
+      s.lowWeight = 0.08;
+      s.midWeight = 0.46;
+      s.highWeight = 0.46;
+      s.ambienceAttackMs = 100;
+      s.ambienceReleaseMs = 520;
+      s.directReject = 0.78;
+      s.directThreshold = 1.45;
+      s.directRecoveryMs = 18;
+      s.center = 0.18;
+      s.centerHp = 2400;
+      s.centerLp = 16000;
+      s.rearHp = 160;
+      s.rearLp = 18000;
+      s.rearLeftTrim = 1.0;
+      s.rearRightTrim = 1.0;
+      break;
+  }
 }
 
 void Apply(HWND hwnd, SettingsState& state)
 {
-  state.enabled = IsDlgButtonChecked(hwnd, kEnable) == BST_CHECKED;
-  state.ambience =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kAmbience, TBM_GETPOS, 0, 0)) / 100.0;
-  state.width =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0)) / 100.0;
-  state.directReject =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kReject, TBM_GETPOS, 0, 0)) / 100.0;
-  state.center =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kCenter, TBM_GETPOS, 0, 0)) / 100.0;
-
-  state.centerHz = std::clamp(GetDoubleEdit(hwnd, kCenterHz, state.centerHz), 200.0, 12000.0);
-  state.rearHz = std::clamp(GetDoubleEdit(hwnd, kRearHz, state.rearHz), 0.0, 1000.0);
-  state.fl = std::clamp(GetDoubleEdit(hwnd, kFl, state.fl), 0.0, 300.0);
-  state.c = std::clamp(GetDoubleEdit(hwnd, kC, state.c), 0.0, 300.0);
-  state.fr = std::clamp(GetDoubleEdit(hwnd, kFr, state.fr), 0.0, 300.0);
-  state.sl = std::clamp(GetDoubleEdit(hwnd, kSl, state.sl), 0.0, 300.0);
-  state.sr = std::clamp(GetDoubleEdit(hwnd, kSr, state.sr), 0.0, 300.0);
+  PullControlsToState(hwnd, state);
+  PushStateToControls(hwnd, state); // reflect clamped values
 
   std::map<std::string, std::string> values;
   values["stereo_processing"] = state.enabled ? "music" : "receiver";
   values["music_surround_gain"] = Fmt(state.ambience);
   values["music_width_floor"] = Fmt(state.width);
+  values["music_ambience_low_weight"] = Fmt(state.lowWeight);
+  values["music_ambience_mid_weight"] = Fmt(state.midWeight);
+  values["music_ambience_high_weight"] = Fmt(state.highWeight);
+  values["music_ambience_attack_ms"] = Fmt(state.ambienceAttackMs, 0);
+  values["music_ambience_release_ms"] = Fmt(state.ambienceReleaseMs, 0);
   values["music_direct_reject"] = Fmt(state.directReject);
+  values["music_direct_threshold"] = Fmt(state.directThreshold);
+  values["music_direct_recovery_ms"] = Fmt(state.directRecoveryMs, 0);
   values["music_center_treble_gain"] = Fmt(state.center);
-  values["music_center_treble_hz"] = Fmt(state.centerHz, 0);
-  values["music_rear_highpass_hz"] = Fmt(state.rearHz, 0);
+  values["music_center_treble_hz"] = Fmt(state.centerHp, 0);
+  values["music_center_lowpass_hz"] = Fmt(state.centerLp, 0);
+  values["music_rear_highpass_hz"] = Fmt(state.rearHp, 0);
+  values["music_rear_lowpass_hz"] = Fmt(state.rearLp, 0);
+  values["music_rear_left_trim"] = Fmt(state.rearLeftTrim);
+  values["music_rear_right_trim"] = Fmt(state.rearRightTrim);
   values["music_distance_fl_in"] = Fmt(state.fl, 1);
   values["music_distance_c_in"] = Fmt(state.c, 1);
   values["music_distance_fr_in"] = Fmt(state.fr, 1);
@@ -262,23 +539,6 @@ void Apply(HWND hwnd, SettingsState& state)
     SetDlgItemTextW(hwnd, kStatus, L"Saved. Engine is offline; settings apply next start.");
 }
 
-HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h)
-{
-  HWND c = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE,
-                         x, y, w, h, parent, nullptr, nullptr, nullptr);
-  SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-  return c;
-}
-
-HWND Edit(HWND parent, int id, int x, int y, int w)
-{
-  HWND c = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                           WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                           x, y, w, 25, parent, reinterpret_cast<HMENU>(id), nullptr, nullptr);
-  SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-  return c;
-}
-
 LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
   auto* state = reinterpret_cast<SettingsState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
@@ -295,111 +555,119 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
       if (!state) return -1;
 
-      gTitleFont = CreateFontW(-26, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+      gTitleFont = CreateFontW(-27, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
       gUiFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+      gSmallFont = CreateFontW(-14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                               DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                               CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
-      HWND title = CreateWindowW(L"STATIC", L"OHL  |  MUSIC SPATIAL",
+      HWND title = CreateWindowW(L"STATIC", L"OHL  |  MUSIC SPATIAL LAB",
                                  WS_CHILD | WS_VISIBLE,
-                                 22, 16, 560, 34, hwnd, nullptr, nullptr, nullptr);
+                                 20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"Stereo -> OHL spatial 5.1. Native multichannel still bypasses this DSP.",
-            23, 50, 600, 24);
+      Label(hwnd, L"v0.4 advanced tuning — presets change controls only; Apply Live commits them.",
+            21, 48, 710, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
                                   WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                                  22, 82, 300, 26,
-                                  hwnd, reinterpret_cast<HMENU>(kEnable), nullptr, nullptr);
+                                  20, 76, 245, 25, hwnd,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEnable)),
+                                  nullptr, nullptr);
       SendMessageW(enable, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-      CheckDlgButton(hwnd, kEnable, state->enabled ? BST_CHECKED : BST_UNCHECKED);
 
-      Label(hwnd, L"Adaptive ambience", 22, 122, 160, 23);
-      HWND amb = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
-                               175, 116, 340, 34, hwnd,
-                               reinterpret_cast<HMENU>(kAmbience), nullptr, nullptr);
-      SendMessageW(amb, TBM_SETRANGE, TRUE, MAKELPARAM(0, 120));
-      SendMessageW(amb, TBM_SETPOS, TRUE,
-                   static_cast<LPARAM>(std::lround(state->ambience * 100.0)));
-      Label(hwnd, L"Base side width", 22, 162, 160, 23);
-      HWND width = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
-                                 175, 156, 340, 34, hwnd,
-                                 reinterpret_cast<HMENU>(kWidth), nullptr, nullptr);
-      SendMessageW(width, TBM_SETRANGE, TRUE, MAKELPARAM(0, 60));
-      SendMessageW(width, TBM_SETPOS, TRUE,
-                   static_cast<LPARAM>(std::lround(state->width * 100.0)));
+      Label(hwnd, L"Quick starts:", 300, 79, 78, 22, true);
+      Button(hwnd, kPresetNatural, L"NATURAL", 378, 73, 83);
+      Button(hwnd, kPresetWide, L"WIDE", 467, 73, 72);
+      Button(hwnd, kPresetAmbient, L"AMBIENT", 545, 73, 88);
+      Button(hwnd, kPresetV03, L"v0.3", 639, 73, 64);
 
-      Label(hwnd, L"Direct-event reject", 22, 202, 160, 23);
-      HWND reject = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
-                                  175, 196, 340, 34, hwnd,
-                                  reinterpret_cast<HMENU>(kReject), nullptr, nullptr);
-      SendMessageW(reject, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
-      SendMessageW(reject, TBM_SETPOS, TRUE,
-                   static_cast<LPARAM>(std::lround(state->directReject * 100.0)));
+      Group(hwnd, L"Spatial field", 14, 108, 722, 260);
+      Label(hwnd, L"Adaptive ambience", 30, 136, 150, 22);
+      Slider(hwnd, kAmbience, 180, 129, 445, 120, PercentToSlider(state->ambience));
+      ValueLabel(hwnd, kAmbienceValue, 642, 136);
 
-      Label(hwnd, L"Center sparkle", 22, 242, 160, 23);
-      HWND center = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
-                                  175, 236, 340, 34, hwnd,
-                                  reinterpret_cast<HMENU>(kCenter), nullptr, nullptr);
-      SendMessageW(center, TBM_SETRANGE, TRUE, MAKELPARAM(0, 50));
-      SendMessageW(center, TBM_SETPOS, TRUE,
-                   static_cast<LPARAM>(std::lround(state->center * 100.0)));
+      Label(hwnd, L"Base side width", 30, 174, 150, 22);
+      Slider(hwnd, kWidth, 180, 167, 445, 60, PercentToSlider(state->width));
+      ValueLabel(hwnd, kWidthValue, 642, 174);
 
-      HWND av = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
-                              525, 122, 65, 23, hwnd,
-                              reinterpret_cast<HMENU>(kAmbienceValue), nullptr, nullptr);
-      HWND wv = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
-                              525, 162, 65, 23, hwnd,
-                              reinterpret_cast<HMENU>(kWidthValue), nullptr, nullptr);
-      HWND dv = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
-                              525, 202, 65, 23, hwnd,
-                              reinterpret_cast<HMENU>(kRejectValue), nullptr, nullptr);
-      HWND cv = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
-                              525, 242, 65, 23, hwnd,
-                              reinterpret_cast<HMENU>(kCenterValue), nullptr, nullptr);
-      SendMessageW(av, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-      SendMessageW(wv, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-      SendMessageW(dv, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-      SendMessageW(cv, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+      Label(hwnd, L"Ambience band emphasis", 30, 210, 160, 22, true);
+      Label(hwnd, L"LOW", 34, 237, 42, 20, true);
+      Slider(hwnd, kLowWeight, 78, 230, 145, 150, PercentToSlider(state->lowWeight));
+      ValueLabel(hwnd, kLowWeightValue, 220, 237, 52);
+      Label(hwnd, L"MID", 276, 237, 42, 20, true);
+      Slider(hwnd, kMidWeight, 316, 230, 145, 150, PercentToSlider(state->midWeight));
+      ValueLabel(hwnd, kMidWeightValue, 458, 237, 52);
+      Label(hwnd, L"HIGH", 512, 237, 45, 20, true);
+      Slider(hwnd, kHighWeight, 557, 230, 110, 150, PercentToSlider(state->highWeight));
+      ValueLabel(hwnd, kHighWeightValue, 670, 237, 52);
 
-      Label(hwnd, L"Center HP", 22, 286, 90, 23);
-      Edit(hwnd, kCenterHz, 105, 282, 75);
-      Label(hwnd, L"Hz", 185, 286, 28, 23);
-      SetDoubleEdit(hwnd, kCenterHz, state->centerHz, 0);
+      Label(hwnd, L"Steering attack", 30, 286, 105, 22);
+      Edit(hwnd, kAmbienceAttack, 137, 282, 72);
+      Label(hwnd, L"ms", 213, 286, 25, 22, true);
+      Label(hwnd, L"release", 265, 286, 55, 22);
+      Edit(hwnd, kAmbienceRelease, 323, 282, 72);
+      Label(hwnd, L"ms", 399, 286, 25, 22, true);
+      Label(hwnd, L"Attack = how fast ambience opens; release = how long the room stays open.",
+            30, 321, 650, 20, true);
 
-      Label(hwnd, L"Rear HP", 245, 286, 75, 23);
-      Edit(hwnd, kRearHz, 315, 282, 75);
-      Label(hwnd, L"Hz", 395, 286, 28, 23);
-      SetDoubleEdit(hwnd, kRearHz, state->rearHz, 0);
+      Group(hwnd, L"Direct events / percussion", 14, 376, 722, 118);
+      Label(hwnd, L"Direct-event reject", 30, 404, 150, 22);
+      Slider(hwnd, kReject, 180, 397, 445, 100, PercentToSlider(state->directReject));
+      ValueLabel(hwnd, kRejectValue, 642, 404);
+      Label(hwnd, L"Sensitivity ratio", 30, 447, 105, 22);
+      Edit(hwnd, kDirectThreshold, 137, 443, 72);
+      Label(hwnd, L"(lower = catches more)", 214, 447, 130, 22, true);
+      Label(hwnd, L"Recovery", 405, 447, 62, 22);
+      Edit(hwnd, kDirectRecovery, 470, 443, 72);
+      Label(hwnd, L"ms", 546, 447, 25, 22, true);
 
-      Label(hwnd, L"Speaker distances from listening position (inches)", 22, 332, 420, 23);
-      Label(hwnd, L"FL", 22, 366, 25, 23); Edit(hwnd, kFl, 47, 361, 58);
-      Label(hwnd, L"C", 124, 366, 20, 23); Edit(hwnd, kC, 145, 361, 58);
-      Label(hwnd, L"FR", 222, 366, 25, 23); Edit(hwnd, kFr, 248, 361, 58);
-      Label(hwnd, L"SL", 326, 366, 25, 23); Edit(hwnd, kSl, 351, 361, 58);
-      Label(hwnd, L"SR", 430, 366, 25, 23); Edit(hwnd, kSr, 455, 361, 58);
+      Group(hwnd, L"Speaker voicing", 14, 502, 722, 142);
+      Label(hwnd, L"Center sparkle", 30, 530, 150, 22);
+      Slider(hwnd, kCenter, 180, 523, 445, 50, PercentToSlider(state->center));
+      ValueLabel(hwnd, kCenterValue, 642, 530);
 
-      SetDoubleEdit(hwnd, kFl, state->fl);
-      SetDoubleEdit(hwnd, kC, state->c);
-      SetDoubleEdit(hwnd, kFr, state->fr);
-      SetDoubleEdit(hwnd, kSl, state->sl);
-      SetDoubleEdit(hwnd, kSr, state->sr);
+      Label(hwnd, L"Center band", 30, 572, 88, 22);
+      Edit(hwnd, kCenterHp, 120, 568, 72);
+      Label(hwnd, L"—", 197, 572, 15, 22);
+      Edit(hwnd, kCenterLp, 215, 568, 76);
+      Label(hwnd, L"Hz", 295, 572, 25, 22, true);
 
-      HWND apply = CreateWindowW(L"BUTTON", L"APPLY LIVE",
-                                 WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                                 22, 420, 155, 42, hwnd,
-                                 reinterpret_cast<HMENU>(kApply), nullptr, nullptr);
+      Label(hwnd, L"Rear band", 348, 572, 72, 22);
+      Edit(hwnd, kRearHp, 423, 568, 70);
+      Label(hwnd, L"—", 497, 572, 15, 22);
+      Edit(hwnd, kRearLp, 515, 568, 76);
+      Label(hwnd, L"Hz", 595, 572, 25, 22, true);
+
+      Label(hwnd, L"SL trim", 30, 609, 52, 22);
+      Edit(hwnd, kRearLeftTrim, 84, 605, 65);
+      Label(hwnd, L"SR trim", 178, 609, 52, 22);
+      Edit(hwnd, kRearRightTrim, 232, 605, 65);
+      Label(hwnd, L"1.00 = unity. Useful for room/speaker asymmetry.", 320, 609, 350, 20, true);
+
+      Group(hwnd, L"Geometry / time alignment", 14, 652, 722, 78);
+      Label(hwnd, L"FL", 30, 682, 24, 22); Edit(hwnd, kFl, 54, 678, 58);
+      Label(hwnd, L"C", 133, 682, 18, 22); Edit(hwnd, kC, 151, 678, 58);
+      Label(hwnd, L"FR", 229, 682, 24, 22); Edit(hwnd, kFr, 253, 678, 58);
+      Label(hwnd, L"SL", 331, 682, 24, 22); Edit(hwnd, kSl, 355, 678, 58);
+      Label(hwnd, L"SR", 433, 682, 24, 22); Edit(hwnd, kSr, 457, 678, 58);
+      Label(hwnd, L"inches from listening position", 530, 682, 175, 22, true);
+
+      HWND apply = Button(hwnd, kApply, L"APPLY LIVE", 20, 748, 150, 42);
       SendMessageW(apply, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+      Button(hwnd, kReload, L"RELOAD SAVED", 180, 748, 145, 42);
 
-      HWND status = CreateWindowW(L"STATIC", L"Changes are persisted to the installed OHL config.",
+      HWND status = CreateWindowW(L"STATIC", L"Presets are non-destructive until Apply Live.",
                                   WS_CHILD | WS_VISIBLE,
-                                  195, 430, 395, 30, hwnd,
-                                  reinterpret_cast<HMENU>(kStatus), nullptr, nullptr);
+                                  344, 758, 380, 30, hwnd,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatus)),
+                                  nullptr, nullptr);
       SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
-      UpdateSliderLabels(hwnd);
+      PushStateToControls(hwnd, *state);
       return 0;
     }
 
@@ -408,12 +676,40 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       return 0;
 
     case WM_COMMAND:
-      if (LOWORD(wp) == kApply && state)
+    {
+      const int id = LOWORD(wp);
+      if (!state) break;
+
+      if (id == kApply)
       {
         Apply(hwnd, *state);
         return 0;
       }
+      if (id == kReload)
+      {
+        SettingsState loaded;
+        loaded.configPath = state->configPath;
+        LoadState(loaded);
+        *state = loaded;
+        PushStateToControls(hwnd, *state);
+        SetDlgItemTextW(hwnd, kStatus, L"Reloaded saved config; no audio change yet.");
+        return 0;
+      }
+      if (id == kPresetNatural || id == kPresetWide || id == kPresetAmbient || id == kPresetV03)
+      {
+        PullControlsToState(hwnd, *state); // retain current geometry + enable state
+        SetPreset(*state, id);
+        PushStateToControls(hwnd, *state);
+
+        const wchar_t* name = id == kPresetNatural ? L"Natural" :
+                              id == kPresetWide ? L"Wide" :
+                              id == kPresetAmbient ? L"Ambient" : L"v0.3 Baseline";
+        std::wstring msgText = std::wstring(name) + L" loaded into controls. Press Apply Live to audition.";
+        SetDlgItemTextW(hwnd, kStatus, msgText.c_str());
+        return 0;
+      }
       break;
+    }
 
     case WM_CTLCOLORSTATIC:
     {
@@ -426,6 +722,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
       if (gTitleFont) { DeleteObject(gTitleFont); gTitleFont = nullptr; }
       if (gUiFont) { DeleteObject(gUiFont); gUiFont = nullptr; }
+      if (gSmallFont) { DeleteObject(gSmallFont); gSmallFont = nullptr; }
       if (gBg) { DeleteObject(gBg); gBg = nullptr; }
       PostQuitMessage(0);
       return 0;
@@ -462,9 +759,9 @@ int RunMusicSettingsGui(const std::string& configPath)
   RegisterClassExW(&wc);
 
   HWND hwnd = CreateWindowExW(
-      0, kClassName, L"OHL Music Settings",
+      0, kClassName, L"OHL Music Spatial Lab",
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-      CW_USEDEFAULT, CW_USEDEFAULT, 630, 525,
+      CW_USEDEFAULT, CW_USEDEFAULT, 770, 845,
       nullptr, nullptr, instance, &state);
 
   if (!hwnd)
