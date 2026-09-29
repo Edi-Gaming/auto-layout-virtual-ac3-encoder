@@ -20,6 +20,7 @@ constexpr UINT kMenuGuitar = 2002;
 constexpr UINT kMenuSwitcher = 2003;
 constexpr UINT kMenuLog = 2004;
 constexpr UINT kMenuExit = 2005;
+constexpr UINT kMenuMusicSettings = 2006;
 
 std::wstring WidenUtf8(const std::string& s)
 {
@@ -198,6 +199,17 @@ void TrayIcon::LaunchSwitcher()
     std::fprintf(stderr, "[Tray] failed to launch switcher\n");
 }
 
+void TrayIcon::LaunchMusicSettings()
+{
+  wchar_t exe[MAX_PATH] = {};
+  if (!GetModuleFileNameW(nullptr, exe, MAX_PATH))
+    return;
+
+  HINSTANCE rc = ShellExecuteW(nullptr, L"open", exe, L"--music-settings", nullptr, SW_SHOWNORMAL);
+  if (reinterpret_cast<INT_PTR>(rc) <= 32)
+    std::fprintf(stderr, "[Tray] failed to launch OHL Music settings\n");
+}
+
 void TrayIcon::OpenLog()
 {
   if (logPath_.empty())
@@ -234,6 +246,7 @@ void TrayIcon::ShowContextMenu()
   AppendMenuW(menu, guitarFlags, kMenuGuitar, L"Guitar / low-latency mode");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING | MF_DEFAULT, kMenuSwitcher, L"Open mode switcher...");
+  AppendMenuW(menu, MF_STRING, kMenuMusicSettings, L"OHL Music settings...");
   AppendMenuW(menu, logPath_.empty() ? (MF_STRING | MF_GRAYED) : MF_STRING,
               kMenuLog, L"Open engine log");
 
@@ -279,6 +292,9 @@ void TrayIcon::ShowContextMenu()
       break;
     case kMenuSwitcher:
       LaunchSwitcher();
+      break;
+    case kMenuMusicSettings:
+      LaunchMusicSettings();
       break;
     case kMenuLog:
       OpenLog();
