@@ -178,9 +178,13 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
 if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
   Add-Content -Path $configDst -Encoding UTF8 -Value @(
     ''
-    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.1'
+    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.2'
     'stereo_processing=receiver'
-    'music_surround_gain=0.55'
+    'music_surround_gain=0.78'
+    'music_width_floor=0.22'
+    'music_center_treble_gain=0.18'
+    'music_center_treble_hz=2400'
+    'music_rear_highpass_hz=140'
     '# Listening-position speaker distances in inches'
     'music_distance_fl_in=33'
     'music_distance_fr_in=33'
@@ -189,6 +193,23 @@ if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
     'music_distance_sl_in=27'
     'music_distance_sr_in=33'
   )
+}
+
+# Existing v0.1 installs already have stereo_processing/music_surround_gain, so add only the new
+# v0.2 controls when absent. Do not overwrite the user's existing gain or speaker measurements.
+$configText = Get-Content $configDst -Raw
+$musicV2Defaults = @(
+  @('music_width_floor', '0.22'),
+  @('music_center_treble_gain', '0.18'),
+  @('music_center_treble_hz', '2400'),
+  @('music_rear_highpass_hz', '140')
+)
+foreach ($pair in $musicV2Defaults) {
+  $key = $pair[0]
+  $value = $pair[1]
+  if ($configText -notmatch ('(?m)^\s*' + [regex]::Escape($key) + '\s*=')) {
+    Add-Content -Path $configDst -Encoding UTF8 -Value ($key + '=' + $value)
+  }
 }
 
 $exePath = Join-Path $InstallDir 'engine.exe'
