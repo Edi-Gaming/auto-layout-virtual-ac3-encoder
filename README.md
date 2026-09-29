@@ -103,41 +103,89 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
   selected stereo policy (default 2000 ms).
 - `--stereo-processing receiver|music` — in auto layout, choose genuine AC3 2.0 for receiver-side
   PLII/A.F.D. (`receiver`, default) or experimental OHL Music stereo spatialization (`music`).
-- `--music-surround-gain <gain>` — OHL Music derived-surround strength (default 0.55).
+- `--music-surround-gain <gain>` — OHL Music adaptive ambience ceiling (default 0.70).
+- `--music-width-floor <gain>` — base stereo-difference width feed (default 0.16).
+- `--music-direct-reject <0..1>` — local transient/direct-event suppression in the rears.
+- Advanced OHL Music voicing/steering controls are available in the config and the native
+  **OHL Music Spatial Lab** UI; see below.
 
 With `stereo_processing=receiver`, auto-layout keeps the original stereo and 5.1 FFmpeg AC3
 encoders alive and switches AC3 payload metadata without reopening S/PDIF.
 
-### Experimental OHL Music v0.3
+### Experimental OHL Music v0.4
 
 `stereo_processing=music` replaces receiver-side PLII for stereo material with an original
 software spatializer before AC3 encoding.
 
-v0.3 is an ambience-first redesign driven by hardware listening feedback from v0.2:
+v0.4 keeps the hardware-liked v0.3 **ambience-first topology** intact: FL/FR remain the original
+stereo program, rear energy is still derived only from stereo-difference/diffuse residue, native
+multichannel input still bypasses OHL Music, and LFE is still not synthesized. The change is
+control: most of the useful DSP constants are no longer hard-coded.
 
-- FL/FR preserve the original stereo program.
-- Rear channels no longer receive a low-level copy of the main L/R program. Rear energy is derived
-  from stereo-difference / diffuse residue only.
-- Three broad analysis bands (<300 Hz, ~300-3000 Hz, >3000 Hz) estimate diffuseness independently,
-  so subtle ambience can open the surrounds without making a centered/direct mix sound like it is
-  playing from behind the listener.
-- `music_width_floor` is now a base gain on side/difference material only; it does not synthesize
-  rear energy from mono/common content.
-- A sample-local onset detector provides `music_direct_reject`: clap/snare attacks are reduced in
-  the rear channels for a few milliseconds while their following ambience/tails remain available.
-- The v0.2 rear all-pass coloration was removed to reduce the subjective "cave/reverb" character.
-- Center sparkle remains: only centered high-passed content feeds the physical center.
-- LFE remains silent; no bass management is synthesized.
-- Native multichannel activity always bypasses OHL Music and uses the existing native 5.1 path.
-- Per-channel speaker-distance delay remains applied before AC3 encoding.
+The rear extractor now exposes:
 
-Reference v0.3 defaults are `music_surround_gain=0.70`, `music_width_floor=0.16`,
-`music_direct_reject=0.78`, `music_center_treble_gain=0.18`, center HP 2400 Hz,
-rear HP 160 Hz, with listening-position distances FL=33", FR=33", C=30", SL=27", SR=33".
+- **Adaptive ambience** — maximum gain added when the analyser sees diffuse spatial information.
+- **Base side width** — minimum gain on genuine L-R stereo-difference material only. It still
+  cannot manufacture rear energy from centered/mono content.
+- **Low / Mid / High ambience weights** — independently decide how much <~300 Hz, ~300-3000 Hz,
+  and >~3000 Hz diffuseness contributes to steering. This is useful for making the rears more
+  "air/room" focused without dragging lower-frequency main events behind the listener.
+- **Ambience attack / release** — how quickly the rear field opens and how long it stays open
+  after spatial information falls away.
+- **Direct-event reject** — how strongly clap/snare/onset events are kept forward.
+- **Direct sensitivity ratio** — lower values classify more sudden events as direct.
+- **Direct recovery** — how quickly the rear feed is allowed back after an onset.
+- **Rear high-pass / low-pass** — independently voice the surround speakers as an ambience band.
+- **Independent SL / SR trims** — compensate room or speaker-level asymmetry without touching
+  distance/time alignment.
+- **Center sparkle gain + HP/LP band** — use the bright physical center only over a chosen presence
+  band instead of giving it the whole vocal.
+- **Per-speaker listening distance** — integer-sample time alignment remains applied before AC3.
 
-The tray and main mode switcher expose **OHL Music settings...**. The settings UI now labels the
-base control **Base side width** and adds a live **Direct-event reject** slider. **Apply Live**
-persists the managed values and rebuilds the surround pipeline without exiting the daemon.
+Reference v0.4 defaults intentionally reproduce the successful v0.3 feel before the new controls
+are touched:
+
+```ini
+music_surround_gain=0.70
+music_width_floor=0.16
+
+music_ambience_low_weight=0.08
+music_ambience_mid_weight=0.46
+music_ambience_high_weight=0.46
+music_ambience_attack_ms=100
+music_ambience_release_ms=520
+
+music_direct_reject=0.78
+music_direct_threshold=1.45
+music_direct_recovery_ms=18
+
+music_center_treble_gain=0.18
+music_center_treble_hz=2400
+music_center_lowpass_hz=16000
+
+music_rear_highpass_hz=160
+music_rear_lowpass_hz=18000
+music_rear_left_trim=1.00
+music_rear_right_trim=1.00
+```
+
+#### OHL Music Spatial Lab
+
+The tray and main mode switcher expose **OHL Music settings...**. v0.4 turns that window into an
+advanced tuning surface grouped into Spatial field, Direct events/percussion, Speaker voicing, and
+Geometry/time alignment.
+
+Four quick-start presets populate the controls without saving anything until **Apply Live**:
+
+- **Natural** — restrained width, stronger direct-event rejection, darker rears.
+- **Wide** — broader stage and more base side width without returning to v0.2 program-copying.
+- **Ambient** — high-frequency/diffuse weighted, slower room decay, aggressive onset rejection.
+- **v0.3 Baseline** — restores the v0.3 reference tune.
+
+**Reload Saved** discards unsaved experiments and restores the installed config. **Apply Live**
+persists the managed keys and asks the running daemon to rebuild its surround pipeline without
+exiting the background engine. Existing day-to-day installs keep their already-tuned values on
+upgrade; only newly introduced keys are added with defaults.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
 `bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
