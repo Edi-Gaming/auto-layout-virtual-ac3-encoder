@@ -108,35 +108,36 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 With `stereo_processing=receiver`, auto-layout keeps the original stereo and 5.1 FFmpeg AC3
 encoders alive and switches AC3 payload metadata without reopening S/PDIF.
 
-### Experimental OHL Music v0.2
+### Experimental OHL Music v0.3
 
 `stereo_processing=music` replaces receiver-side PLII for stereo material with an original
 software spatializer before AC3 encoding.
 
-v0.2 was driven directly by first hardware listening feedback from v0.1:
+v0.3 is an ambience-first redesign driven by hardware listening feedback from v0.2:
 
-- FL/FR still preserve the original stereo program.
-- Reverting to "fronts only" is no longer allowed: an always-present decorrelated width bed keeps
-  ordinary highly-correlated modern mixes spatial even when there is little extractable ambience.
-- The old transient/crest-factor suppression was removed. Snare/kick transients no longer gate the
-  rear field toward silence.
-- Adaptive L-R ambience extraction remains layered on top of the width bed and decays slowly so
-  the soundstage does not pump between musical events.
-- C now receives only centered high-passed content ("center sparkle"), using the bright physical
-  center as an intelligibility/treble accent while the vocal/body remains phantom-centered in FL/FR.
-- LFE remains silent; OHL Music still does not synthesize bass management.
-- Rear channels are high-passed so bass stays anchored to the main fronts.
-- Native C/LFE/surround activity always bypasses OHL Music and uses the existing native 5.1 path.
-- Per-channel integer-sample delay remains applied before AC3 encoding from measured speaker distances.
+- FL/FR preserve the original stereo program.
+- Rear channels no longer receive a low-level copy of the main L/R program. Rear energy is derived
+  from stereo-difference / diffuse residue only.
+- Three broad analysis bands (<300 Hz, ~300-3000 Hz, >3000 Hz) estimate diffuseness independently,
+  so subtle ambience can open the surrounds without making a centered/direct mix sound like it is
+  playing from behind the listener.
+- `music_width_floor` is now a base gain on side/difference material only; it does not synthesize
+  rear energy from mono/common content.
+- A sample-local onset detector provides `music_direct_reject`: clap/snare attacks are reduced in
+  the rear channels for a few milliseconds while their following ambience/tails remain available.
+- The v0.2 rear all-pass coloration was removed to reduce the subjective "cave/reverb" character.
+- Center sparkle remains: only centered high-passed content feeds the physical center.
+- LFE remains silent; no bass management is synthesized.
+- Native multichannel activity always bypasses OHL Music and uses the existing native 5.1 path.
+- Per-channel speaker-distance delay remains applied before AC3 encoding.
 
-Reference v0.2 tuning is `music_surround_gain=0.78`, `music_width_floor=0.22`,
-`music_center_treble_gain=0.18`, center HP 2400 Hz, rear HP 140 Hz, with listening-position
-distances FL=33", FR=33", C=30", SL=27", SR=33".
+Reference v0.3 defaults are `music_surround_gain=0.70`, `music_width_floor=0.16`,
+`music_direct_reject=0.78`, `music_center_treble_gain=0.18`, center HP 2400 Hz,
+rear HP 160 Hz, with listening-position distances FL=33", FR=33", C=30", SL=27", SR=33".
 
-The tray and main mode switcher now expose **OHL Music settings...**. The native settings window
-can change the stereo policy, adaptive ambience, width bed, center sparkle, filter cutoffs, and
-speaker distances. **Apply Live** persists the values to the installed config and asks the running
-daemon to rebuild its surround pipeline without exiting the background engine.
+The tray and main mode switcher expose **OHL Music settings...**. The settings UI now labels the
+base control **Base side width** and adds a live **Direct-event reject** slider. **Apply Live**
+persists the managed values and rebuilds the surround pipeline without exiting the daemon.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
 `bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
