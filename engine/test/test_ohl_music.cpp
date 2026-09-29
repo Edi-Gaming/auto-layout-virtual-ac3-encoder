@@ -138,6 +138,7 @@ TEST_CASE("OHL Music base width passes subtle stereo difference without copying 
   p.centerTrebleGain = 0.0f;
   p.widthFloor = 0.16f;
   p.surroundGain = 0.0f;
+  p.frontLock = 0.0f;
   p.directReject = 0.0f;
   REQUIRE(upmixer.Init(p));
 
