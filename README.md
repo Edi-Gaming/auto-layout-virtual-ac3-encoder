@@ -108,23 +108,35 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 With `stereo_processing=receiver`, auto-layout keeps the original stereo and 5.1 FFmpeg AC3
 encoders alive and switches AC3 payload metadata without reopening S/PDIF.
 
-### Experimental OHL Music v0.1
+### Experimental OHL Music v0.2
 
 `stereo_processing=music` replaces receiver-side PLII for stereo material with an original
-software spatializer before AC3 encoding. It is deliberately conservative:
+software spatializer before AC3 encoding.
 
-- FL/FR preserve the original stereo program.
-- C is silent, producing a phantom center from the main front pair.
-- LFE is silent; v0.1 does not synthesize bass management.
-- SL/SR are derived from stereo difference information with block correlation/coherence,
-  hard-pan suppression, and transient protection.
+v0.2 was driven directly by first hardware listening feedback from v0.1:
+
+- FL/FR still preserve the original stereo program.
+- Reverting to "fronts only" is no longer allowed: an always-present decorrelated width bed keeps
+  ordinary highly-correlated modern mixes spatial even when there is little extractable ambience.
+- The old transient/crest-factor suppression was removed. Snare/kick transients no longer gate the
+  rear field toward silence.
+- Adaptive L-R ambience extraction remains layered on top of the width bed and decays slowly so
+  the soundstage does not pump between musical events.
+- C now receives only centered high-passed content ("center sparkle"), using the bright physical
+  center as an intelligibility/treble accent while the vocal/body remains phantom-centered in FL/FR.
+- LFE remains silent; OHL Music still does not synthesize bass management.
+- Rear channels are high-passed so bass stays anchored to the main fronts.
 - Native C/LFE/surround activity always bypasses OHL Music and uses the existing native 5.1 path.
-- Per-channel integer-sample delay is applied before AC3 encoding from measured speaker distances.
+- Per-channel integer-sample delay remains applied before AC3 encoding from measured speaker distances.
 
-Current reference tuning is `music_surround_gain=0.55` with listening-position distances
-FL=33", FR=33", C=30", SL=27", SR=33". At 48 kHz this yields approximately 0/0/11/21/0
-samples of added delay for FL/FR/C/SL/SR respectively. The feature is opt-in; packaged and upgraded
-configs stay on `stereo_processing=receiver` until explicitly changed.
+Reference v0.2 tuning is `music_surround_gain=0.78`, `music_width_floor=0.22`,
+`music_center_treble_gain=0.18`, center HP 2400 Hz, rear HP 140 Hz, with listening-position
+distances FL=33", FR=33", C=30", SL=27", SR=33".
+
+The tray and main mode switcher now expose **OHL Music settings...**. The native settings window
+can change the stereo policy, adaptive ambience, width bed, center sparkle, filter cutoffs, and
+speaker distances. **Apply Live** persists the values to the installed config and asks the running
+daemon to rebuild its surround pipeline without exiting the background engine.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
 `bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
