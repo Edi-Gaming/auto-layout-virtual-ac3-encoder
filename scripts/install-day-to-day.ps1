@@ -173,6 +173,24 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
   )
 }
 
+# Preserve existing audio behavior on upgrade, but make the experimental OHL Music profile
+# discoverable/configurable in the installed file. Receiver mode is deliberately the safe default.
+if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
+  Add-Content -Path $configDst -Encoding UTF8 -Value @(
+    ''
+    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.1'
+    'stereo_processing=receiver'
+    'music_surround_gain=0.55'
+    '# Listening-position speaker distances in inches'
+    'music_distance_fl_in=33'
+    'music_distance_fr_in=33'
+    'music_distance_c_in=30'
+    'music_distance_lfe_in=33'
+    'music_distance_sl_in=27'
+    'music_distance_sr_in=33'
+  )
+}
+
 $exePath = Join-Path $InstallDir 'engine.exe'
 $logPath = Join-Path $InstallDir 'engine.log'
 $launcherPath = Join-Path $InstallDir 'OHL-Autostart.vbs'
