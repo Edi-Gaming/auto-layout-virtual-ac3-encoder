@@ -36,6 +36,8 @@ constexpr int kSl = 3013;
 constexpr int kSr = 3014;
 constexpr int kApply = 3015;
 constexpr int kStatus = 3016;
+constexpr int kReject = 3017;
+constexpr int kRejectValue = 3018;
 
 HBRUSH gBg = nullptr;
 HFONT gTitleFont = nullptr;
@@ -45,11 +47,12 @@ struct SettingsState
 {
   std::string configPath;
   bool enabled = true;
-  double ambience = 0.78;
-  double width = 0.22;
+  double ambience = 0.70;
+  double width = 0.16;
+  double directReject = 0.78;
   double center = 0.18;
   double centerHz = 2400.0;
-  double rearHz = 140.0;
+  double rearHz = 160.0;
   double fl = 33.0;
   double c = 30.0;
   double fr = 33.0;
@@ -99,6 +102,7 @@ void LoadState(SettingsState& s)
   s.enabled = it != v.end() && it->second == "music";
   s.ambience = ReadDouble(v, "music_surround_gain", s.ambience);
   s.width = ReadDouble(v, "music_width_floor", s.width);
+  s.directReject = ReadDouble(v, "music_direct_reject", s.directReject);
   s.center = ReadDouble(v, "music_center_treble_gain", s.center);
   s.centerHz = ReadDouble(v, "music_center_treble_hz", s.centerHz);
   s.rearHz = ReadDouble(v, "music_rear_highpass_hz", s.rearHz);
@@ -196,13 +200,16 @@ void UpdateSliderLabels(HWND hwnd)
 {
   const int a = static_cast<int>(SendDlgItemMessageW(hwnd, kAmbience, TBM_GETPOS, 0, 0));
   const int w = static_cast<int>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0));
+  const int d = static_cast<int>(SendDlgItemMessageW(hwnd, kReject, TBM_GETPOS, 0, 0));
   const int c = static_cast<int>(SendDlgItemMessageW(hwnd, kCenter, TBM_GETPOS, 0, 0));
 
   const std::wstring av = std::to_wstring(a) + L"%";
   const std::wstring wv = std::to_wstring(w) + L"%";
+  const std::wstring dv = std::to_wstring(d) + L"%";
   const std::wstring cv = std::to_wstring(c) + L"%";
   SetDlgItemTextW(hwnd, kAmbienceValue, av.c_str());
   SetDlgItemTextW(hwnd, kWidthValue, wv.c_str());
+  SetDlgItemTextW(hwnd, kRejectValue, dv.c_str());
   SetDlgItemTextW(hwnd, kCenterValue, cv.c_str());
 }
 
@@ -213,6 +220,8 @@ void Apply(HWND hwnd, SettingsState& state)
       static_cast<double>(SendDlgItemMessageW(hwnd, kAmbience, TBM_GETPOS, 0, 0)) / 100.0;
   state.width =
       static_cast<double>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0)) / 100.0;
+  state.directReject =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kReject, TBM_GETPOS, 0, 0)) / 100.0;
   state.center =
       static_cast<double>(SendDlgItemMessageW(hwnd, kCenter, TBM_GETPOS, 0, 0)) / 100.0;
 
@@ -228,6 +237,7 @@ void Apply(HWND hwnd, SettingsState& state)
   values["stereo_processing"] = state.enabled ? "music" : "receiver";
   values["music_surround_gain"] = Fmt(state.ambience);
   values["music_width_floor"] = Fmt(state.width);
+  values["music_direct_reject"] = Fmt(state.directReject);
   values["music_center_treble_gain"] = Fmt(state.center);
   values["music_center_treble_hz"] = Fmt(state.centerHz, 0);
   values["music_rear_highpass_hz"] = Fmt(state.rearHz, 0);
@@ -313,7 +323,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       SendMessageW(amb, TBM_SETRANGE, TRUE, MAKELPARAM(0, 120));
       SendMessageW(amb, TBM_SETPOS, TRUE,
                    static_cast<LPARAM>(std::lround(state->ambience * 100.0)));
-      Label(hwnd, L"Always-on width", 22, 162, 160, 23);
+      Label(hwnd, L"Base side width", 22, 162, 160, 23);
       HWND width = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
                                  175, 156, 340, 34, hwnd,
                                  reinterpret_cast<HMENU>(kWidth), nullptr, nullptr);
@@ -321,9 +331,17 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       SendMessageW(width, TBM_SETPOS, TRUE,
                    static_cast<LPARAM>(std::lround(state->width * 100.0)));
 
-      Label(hwnd, L"Center sparkle", 22, 202, 160, 23);
-      HWND center = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
+      Label(hwnd, L"Direct-event reject", 22, 202, 160, 23);
+      HWND reject = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
                                   175, 196, 340, 34, hwnd,
+                                  reinterpret_cast<HMENU>(kReject), nullptr, nullptr);
+      SendMessageW(reject, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+      SendMessageW(reject, TBM_SETPOS, TRUE,
+                   static_cast<LPARAM>(std::lround(state->directReject * 100.0)));
+
+      Label(hwnd, L"Center sparkle", 22, 242, 160, 23);
+      HWND center = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
+                                  175, 236, 340, 34, hwnd,
                                   reinterpret_cast<HMENU>(kCenter), nullptr, nullptr);
       SendMessageW(center, TBM_SETRANGE, TRUE, MAKELPARAM(0, 50));
       SendMessageW(center, TBM_SETPOS, TRUE,
@@ -335,29 +353,33 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       HWND wv = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
                               525, 162, 65, 23, hwnd,
                               reinterpret_cast<HMENU>(kWidthValue), nullptr, nullptr);
-      HWND cv = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
+      HWND dv = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
                               525, 202, 65, 23, hwnd,
+                              reinterpret_cast<HMENU>(kRejectValue), nullptr, nullptr);
+      HWND cv = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
+                              525, 242, 65, 23, hwnd,
                               reinterpret_cast<HMENU>(kCenterValue), nullptr, nullptr);
       SendMessageW(av, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
       SendMessageW(wv, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+      SendMessageW(dv, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
       SendMessageW(cv, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
-      Label(hwnd, L"Center HP", 22, 246, 90, 23);
-      Edit(hwnd, kCenterHz, 105, 242, 75);
-      Label(hwnd, L"Hz", 185, 246, 28, 23);
+      Label(hwnd, L"Center HP", 22, 286, 90, 23);
+      Edit(hwnd, kCenterHz, 105, 282, 75);
+      Label(hwnd, L"Hz", 185, 286, 28, 23);
       SetDoubleEdit(hwnd, kCenterHz, state->centerHz, 0);
 
-      Label(hwnd, L"Rear HP", 245, 246, 75, 23);
-      Edit(hwnd, kRearHz, 315, 242, 75);
-      Label(hwnd, L"Hz", 395, 246, 28, 23);
+      Label(hwnd, L"Rear HP", 245, 286, 75, 23);
+      Edit(hwnd, kRearHz, 315, 282, 75);
+      Label(hwnd, L"Hz", 395, 286, 28, 23);
       SetDoubleEdit(hwnd, kRearHz, state->rearHz, 0);
 
-      Label(hwnd, L"Speaker distances from listening position (inches)", 22, 292, 420, 23);
-      Label(hwnd, L"FL", 22, 326, 25, 23); Edit(hwnd, kFl, 47, 321, 58);
-      Label(hwnd, L"C", 124, 326, 20, 23); Edit(hwnd, kC, 145, 321, 58);
-      Label(hwnd, L"FR", 222, 326, 25, 23); Edit(hwnd, kFr, 248, 321, 58);
-      Label(hwnd, L"SL", 326, 326, 25, 23); Edit(hwnd, kSl, 351, 321, 58);
-      Label(hwnd, L"SR", 430, 326, 25, 23); Edit(hwnd, kSr, 455, 321, 58);
+      Label(hwnd, L"Speaker distances from listening position (inches)", 22, 332, 420, 23);
+      Label(hwnd, L"FL", 22, 366, 25, 23); Edit(hwnd, kFl, 47, 361, 58);
+      Label(hwnd, L"C", 124, 366, 20, 23); Edit(hwnd, kC, 145, 361, 58);
+      Label(hwnd, L"FR", 222, 366, 25, 23); Edit(hwnd, kFr, 248, 361, 58);
+      Label(hwnd, L"SL", 326, 366, 25, 23); Edit(hwnd, kSl, 351, 361, 58);
+      Label(hwnd, L"SR", 430, 366, 25, 23); Edit(hwnd, kSr, 455, 361, 58);
 
       SetDoubleEdit(hwnd, kFl, state->fl);
       SetDoubleEdit(hwnd, kC, state->c);
@@ -367,13 +389,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
       HWND apply = CreateWindowW(L"BUTTON", L"APPLY LIVE",
                                  WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                                 22, 380, 155, 42, hwnd,
+                                 22, 420, 155, 42, hwnd,
                                  reinterpret_cast<HMENU>(kApply), nullptr, nullptr);
       SendMessageW(apply, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
       HWND status = CreateWindowW(L"STATIC", L"Changes are persisted to the installed OHL config.",
                                   WS_CHILD | WS_VISIBLE,
-                                  195, 390, 395, 30, hwnd,
+                                  195, 430, 395, 30, hwnd,
                                   reinterpret_cast<HMENU>(kStatus), nullptr, nullptr);
       SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
@@ -442,7 +464,7 @@ int RunMusicSettingsGui(const std::string& configPath)
   HWND hwnd = CreateWindowExW(
       0, kClassName, L"OHL Music Settings",
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-      CW_USEDEFAULT, CW_USEDEFAULT, 630, 480,
+      CW_USEDEFAULT, CW_USEDEFAULT, 630, 525,
       nullptr, nullptr, instance, &state);
 
   if (!hwnd)
