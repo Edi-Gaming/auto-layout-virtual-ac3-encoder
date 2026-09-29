@@ -18,6 +18,7 @@ constexpr int kIdStatus = 1003;
 constexpr int kIdHint = 1004;
 constexpr int kIdTitle = 1005;
 constexpr int kIdSubtitle = 1006;
+constexpr int kIdMusicSettings = 1007;
 
 HBRUSH gBackgroundBrush = nullptr;
 HFONT gTitleFont = nullptr;
@@ -65,6 +66,14 @@ void RefreshStatus(HWND hwnd)
   if (!SendModeCommand("status", response, 250))
     response = "offline";
   SetStatus(hwnd, response);
+}
+
+void LaunchMusicSettings()
+{
+  wchar_t exe[MAX_PATH] = {};
+  if (!GetModuleFileNameW(nullptr, exe, MAX_PATH))
+    return;
+  ShellExecuteW(nullptr, L"open", exe, L"--music-settings", nullptr, SW_SHOWNORMAL);
 }
 
 void RequestMode(HWND hwnd, const char* mode)
@@ -132,12 +141,19 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                   hwnd, reinterpret_cast<HMENU>(kIdGuitar), nullptr, nullptr);
       SendMessageW(guitar, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
 
+      HWND music = CreateWindowW(L"BUTTON",
+                                 L"OHL MUSIC SETTINGS...",
+                                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                 22, 246, 520, 42,
+                                 hwnd, reinterpret_cast<HMENU>(kIdMusicSettings), nullptr, nullptr);
+      SendMessageW(music, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
+
       HWND hint = CreateWindowW(
           L"STATIC",
           L"Surround owns optical for AC-3. Guitar releases S/PDIF for ASIO4ALL; "
-          L"the engine itself stays running.",
+          L"OHL Music settings apply live to the stereo spatializer.",
           WS_CHILD | WS_VISIBLE,
-          22, 246, 520, 48,
+          22, 304, 520, 48,
           hwnd, reinterpret_cast<HMENU>(kIdHint), nullptr, nullptr);
       SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
@@ -162,8 +178,9 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
       switch (LOWORD(wp))
       {
-        case kIdSurround: RequestMode(hwnd, "surround"); return 0;
-        case kIdGuitar:   RequestMode(hwnd, "guitar");   return 0;
+        case kIdSurround:      RequestMode(hwnd, "surround"); return 0;
+        case kIdGuitar:        RequestMode(hwnd, "guitar");   return 0;
+        case kIdMusicSettings: LaunchMusicSettings();          return 0;
       }
       break;
 
@@ -249,7 +266,8 @@ ModeControlServer::~ModeControlServer()
 bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
                               std::atomic<RuntimeAudioMode>* current,
                               std::string* lastError,
-                              std::mutex* errorMutex)
+                              std::mutex* errorMutex,
+                              std::atomic_bool* reloadConfig)
 {
   if (thread_.joinable())
     return true;
@@ -258,6 +276,7 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
   current_ = current;
   lastError_ = lastError;
   errorMutex_ = errorMutex;
+  reloadConfig_ = reloadConfig;
   stop_.store(false);
 
   try
@@ -332,6 +351,12 @@ void ModeControlServer::ThreadProc()
         desired_->store(RuntimeAudioMode::Guitar);
         response = "ok";
       }
+      else if (command == "reload")
+      {
+        if (reloadConfig_)
+          reloadConfig_->store(true);
+        response = "ok";
+      }
       else if (command == "status")
       {
         RuntimeAudioMode state = current_->load();
@@ -392,7 +417,7 @@ int RunModeSwitcherGui()
       CW_USEDEFAULT,
       CW_USEDEFAULT,
       580,
-      340,
+      405,
       nullptr,
       nullptr,
       instance,
