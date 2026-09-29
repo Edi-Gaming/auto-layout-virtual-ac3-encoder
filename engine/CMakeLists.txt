@@ -81,6 +81,8 @@ add_executable(engine
   src/DeviceEnum.h
   src/ModeControl.cpp
   src/ModeControl.h
+  src/MusicSettings.cpp
+  src/MusicSettings.h
   src/TrayIcon.cpp
   src/TrayIcon.h
   src/WasapiCapture.cpp
@@ -88,7 +90,7 @@ add_executable(engine
   src/WasapiPassthrough.cpp
   src/WasapiPassthrough.h
 )
-target_link_libraries(engine PRIVATE ac3core ffmpeg ole32 avrt user32 gdi32 shell32)
+target_link_libraries(engine PRIVATE ac3core ffmpeg ole32 avrt user32 gdi32 shell32 comctl32)
 if(MSVC)
   target_compile_options(engine PRIVATE /permissive-)
 endif()
