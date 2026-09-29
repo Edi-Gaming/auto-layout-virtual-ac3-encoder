@@ -48,7 +48,11 @@ public:
     // AC3 2.0 for receiver-side PLII/A.F.D. When true, stereo is spatialized into discrete 5.1
     // with phantom center and a silent LFE; native multichannel input still bypasses it.
     bool musicStereo = false;
-    double musicSurroundGain = 0.55;
+    double musicSurroundGain = 0.78;
+    double musicWidthFloor = 0.22;
+    double musicCenterTrebleGain = 0.18;
+    double musicCenterTrebleHz = 2400.0;
+    double musicRearHighpassHz = 140.0;
     std::array<double, 6> musicDistanceInches{{33.0, 33.0, 30.0, 33.0, 27.0, 33.0}};
   };
 
