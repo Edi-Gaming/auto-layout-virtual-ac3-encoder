@@ -1,8 +1,10 @@
 // OhlMusicUpmixer.h — stereo -> discrete 5.1 OHL Music spatializer.
 //
-// v0.4 keeps the v0.3 ambience-first topology and exposes the tuning dimensions that were
-// previously hard-coded: ambience band emphasis, steering time constants, transient detector
-// sensitivity/recovery, rear voicing, rear trims, and a center sparkle band-pass.
+// v0.5 keeps v0.4's tunable ambience analysis but changes rear spatial topology:
+//  * centered/coherent midband material gets an explicit Front Lock so vocal body stays forward,
+//  * SL/SR are independent L/R residuals after coherent-center subtraction rather than a mirrored
+//    +/- side pair, so the rear field follows actual stereo asymmetry instead of sounding like a
+//    symmetric hall return.
 //
 // Output channel order matches Windows/AC3 5.1-back: FL FR FC LFE BL BR.
 #pragma once
@@ -20,55 +22,43 @@ public:
   {
     int sampleRate = 48000;
 
-    // Maximum adaptive ambience contribution above the base side-width feed.
     float surroundGain = 0.70f;
-
-    // Base gain applied only to stereo-difference residue.
     float widthFloor = 0.16f;
 
-    // Multiband ambience analysis weighting. Values do not have to sum to 1.0; the resulting
-    // ambience score is clamped after the weighted sum.
     float ambienceLowWeight = 0.08f;
     float ambienceMidWeight = 0.46f;
     float ambienceHighWeight = 0.46f;
-
-    // Block-level steering time constants. v0.3's 0.28 / 0.06 per-AC3-frame smoothing is
-    // approximately 100 ms attack / 520 ms release at 48 kHz, so these defaults preserve it.
     float ambienceAttackMs = 100.0f;
     float ambienceReleaseMs = 520.0f;
 
-    // Sample-local direct-event rejection. Higher reject keeps onsets forward.
-    float directReject = 0.78f;
+    // 0..1 attenuation strength for coherent/centered midrange material in the rear field.
+    // 0 = v0.4 behavior, 1 = aggressively keep centered vocal/instrument body in front.
+    float frontLock = 0.88f;
 
-    // Fast/slow envelope ratio at which onset rejection begins. Higher threshold = less
-    // sensitive. directRecoveryMs controls how quickly the fast detector lets the rear recover.
+    float directReject = 0.78f;
     float directThreshold = 1.45f;
     float directRecoveryMs = 18.0f;
 
-    // Gain for centered band-limited treble sent to the physical center.
     float centerTrebleGain = 0.18f;
     float centerTrebleHz = 2400.0f;
     float centerLowpassHz = 16000.0f;
 
-    // Rear voicing / balance.
     float rearHighpassHz = 160.0f;
     float rearLowpassHz = 18000.0f;
     float rearLeftTrim = 1.0f;
     float rearRightTrim = 1.0f;
 
-    // Listening-position distances in inches, channel order FL FR FC LFE SL SR.
     std::array<float, kChannels> distanceInches{{33.0f, 33.0f, 30.0f, 33.0f, 27.0f, 33.0f}};
   };
 
   bool Init(const Params& params);
   void Reset();
 
-  // stereo: interleaved L,R float PCM, frames sample frames.
-  // out51 : interleaved FL,FR,FC,LFE,SL,SR float PCM, frames sample frames.
   void ProcessStereo(const float* stereo, size_t frames, float* out51);
 
   float LastCorrelation() const { return lastCorrelation_; }
   float LastSurroundAmount() const { return surroundAmount_; }
+  float LastFrontLockConfidence() const { return lastFrontLockConfidence_; }
   const std::array<int, kChannels>& DelaySamples() const { return delaySamples_; }
 
 private:
@@ -136,4 +126,5 @@ private:
   bool gainInitialized_ = false;
   float surroundAmount_ = 0.0f;
   float lastCorrelation_ = 1.0f;
+  float lastFrontLockConfidence_ = 0.0f;
 };
