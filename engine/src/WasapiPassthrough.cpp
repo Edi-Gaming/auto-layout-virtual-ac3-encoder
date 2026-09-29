@@ -157,6 +157,10 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       OhlMusicUpmixer::Params op;
       op.sampleRate = rate;
       op.surroundGain = static_cast<float>(params_.musicSurroundGain);
+      op.widthFloor = static_cast<float>(params_.musicWidthFloor);
+      op.centerTrebleGain = static_cast<float>(params_.musicCenterTrebleGain);
+      op.centerTrebleHz = static_cast<float>(params_.musicCenterTrebleHz);
+      op.rearHighpassHz = static_cast<float>(params_.musicRearHighpassHz);
       for (size_t i = 0; i < op.distanceInches.size(); ++i)
         op.distanceInches[i] = static_cast<float>(params_.musicDistanceInches[i]);
 
@@ -168,8 +172,14 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       }
 
       const auto& d = musicUpmixer_.DelaySamples();
-      std::printf("[OhlMusic] enabled: gain %.2f, delay samples FL=%d FR=%d C=%d LFE=%d SL=%d SR=%d\n",
-                  params_.musicSurroundGain, d[0], d[1], d[2], d[3], d[4], d[5]);
+      std::printf("[OhlMusic] enabled: adaptive %.2f, width %.2f, center-treble %.2f @ %.0f Hz, "
+                  "rear HP %.0f Hz, delay samples FL=%d FR=%d C=%d LFE=%d SL=%d SR=%d\n",
+                  params_.musicSurroundGain,
+                  params_.musicWidthFloor,
+                  params_.musicCenterTrebleGain,
+                  params_.musicCenterTrebleHz,
+                  params_.musicRearHighpassHz,
+                  d[0], d[1], d[2], d[3], d[4], d[5]);
     }
     else
     {
