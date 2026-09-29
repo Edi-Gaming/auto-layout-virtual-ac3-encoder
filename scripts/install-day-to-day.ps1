@@ -178,14 +178,25 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
 if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
   Add-Content -Path $configDst -Encoding UTF8 -Value @(
     ''
-    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.3'
+    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.4'
     'stereo_processing=receiver'
     'music_surround_gain=0.70'
     'music_width_floor=0.16'
+    'music_ambience_low_weight=0.08'
+    'music_ambience_mid_weight=0.46'
+    'music_ambience_high_weight=0.46'
+    'music_ambience_attack_ms=100'
+    'music_ambience_release_ms=520'
     'music_direct_reject=0.78'
+    'music_direct_threshold=1.45'
+    'music_direct_recovery_ms=18'
     'music_center_treble_gain=0.18'
     'music_center_treble_hz=2400'
+    'music_center_lowpass_hz=16000'
     'music_rear_highpass_hz=160'
+    'music_rear_lowpass_hz=18000'
+    'music_rear_left_trim=1.00'
+    'music_rear_right_trim=1.00'
     '# Listening-position speaker distances in inches'
     'music_distance_fl_in=33'
     'music_distance_fr_in=33'
@@ -201,10 +212,21 @@ if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
 $configText = Get-Content $configDst -Raw
 $musicUpgradeDefaults = @(
   @('music_width_floor', '0.16'),
+  @('music_ambience_low_weight', '0.08'),
+  @('music_ambience_mid_weight', '0.46'),
+  @('music_ambience_high_weight', '0.46'),
+  @('music_ambience_attack_ms', '100'),
+  @('music_ambience_release_ms', '520'),
   @('music_direct_reject', '0.78'),
+  @('music_direct_threshold', '1.45'),
+  @('music_direct_recovery_ms', '18'),
   @('music_center_treble_gain', '0.18'),
   @('music_center_treble_hz', '2400'),
-  @('music_rear_highpass_hz', '160')
+  @('music_center_lowpass_hz', '16000'),
+  @('music_rear_highpass_hz', '160'),
+  @('music_rear_lowpass_hz', '18000'),
+  @('music_rear_left_trim', '1.00'),
+  @('music_rear_right_trim', '1.00')
 )
 foreach ($pair in $musicUpgradeDefaults) {
   $key = $pair[0]
