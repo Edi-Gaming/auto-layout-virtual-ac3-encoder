@@ -17,7 +17,7 @@ enum class RuntimeAudioMode
 const char* RuntimeAudioModeName(RuntimeAudioMode mode);
 
 // Sends one command to the already-running engine control pipe.
-// Commands: "surround", "guitar", "status".
+// Commands: "surround", "guitar", "status", "reload".
 bool SendModeCommand(const std::string& command, std::string& response, unsigned timeoutMs = 2000);
 
 class ModeControlServer
@@ -29,7 +29,8 @@ public:
   bool Start(std::atomic<RuntimeAudioMode>* desired,
              std::atomic<RuntimeAudioMode>* current,
              std::string* lastError,
-             std::mutex* errorMutex);
+             std::mutex* errorMutex,
+             std::atomic_bool* reloadConfig);
   void Stop();
 
 private:
@@ -39,6 +40,7 @@ private:
   std::atomic<RuntimeAudioMode>* current_ = nullptr;
   std::string* lastError_ = nullptr;
   std::mutex* errorMutex_ = nullptr;
+  std::atomic_bool* reloadConfig_ = nullptr;
 
   std::atomic_bool stop_{false};
   std::thread thread_;
