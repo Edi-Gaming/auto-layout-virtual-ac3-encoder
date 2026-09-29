@@ -45,6 +45,8 @@ endfunction()
 add_library(ac3core STATIC
   src/SpdifEncoder.cpp
   src/SpdifEncoder.h
+  src/OhlMusicUpmixer.cpp
+  src/OhlMusicUpmixer.h
   src/RingBuffer.h
 )
 target_include_directories(ac3core PUBLIC src)
@@ -107,6 +109,7 @@ add_executable(unit_tests
   test/test_ringbuffer.cpp
   test/test_encoder.cpp
   test/test_upmix.cpp
+  test/test_ohl_music.cpp
 )
 target_include_directories(unit_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/doctest"
