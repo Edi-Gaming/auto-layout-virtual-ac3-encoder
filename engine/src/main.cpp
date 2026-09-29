@@ -17,6 +17,7 @@
 #include "Config.h"
 #include "DeviceEnum.h"
 #include "ModeControl.h"
+#include "MusicSettings.h"
 #include "RingBuffer.h"
 #include "TrayIcon.h"
 #include "WasapiCapture.h"
@@ -159,6 +160,32 @@ static void ParseArgs(int argc, char** argv, Config& c)
     else
       std::fprintf(stderr, "ignoring unknown arg: %s\n", a.c_str());
   }
+}
+
+static bool ValidateConfig(const Config& cfg)
+{
+  if (cfg.layout != "auto" && cfg.layout != "5.1")
+  {
+    std::fprintf(stderr, "invalid layout \"%s\"; expected auto or 5.1\n", cfg.layout.c_str());
+    return false;
+  }
+  if (cfg.stereoProcessing != "receiver" && cfg.stereoProcessing != "music")
+  {
+    std::fprintf(stderr,
+                 "invalid stereo_processing \"%s\"; expected receiver or music\n",
+                 cfg.stereoProcessing.c_str());
+    return false;
+  }
+  if (cfg.musicSurroundGain < 0.0 || cfg.musicSurroundGain > 2.0 ||
+      cfg.musicWidthFloor < 0.0 || cfg.musicWidthFloor > 1.0 ||
+      cfg.musicCenterTrebleGain < 0.0 || cfg.musicCenterTrebleGain > 1.0 ||
+      cfg.musicCenterTrebleHz < 200.0 || cfg.musicCenterTrebleHz > 12000.0 ||
+      cfg.musicRearHighpassHz < 0.0 || cfg.musicRearHighpassHz > 1000.0)
+  {
+    std::fprintf(stderr, "invalid OHL Music tuning value\n");
+    return false;
+  }
+  return true;
 }
 
 static bool ResolveCapture(const Config& c, ComPtr<IMMDevice>& dev, EndpointInfo& info)
@@ -372,6 +399,11 @@ static bool HandleControllerCommandLine(int argc, char** argv)
       std::exit(RunModeSwitcherGui());
     }
 
+    if (a == "--music-settings")
+    {
+      std::exit(RunMusicSettingsGui(ExeDir() + "\\virtual-ac3-encoder.conf"));
+    }
+
     if (a == "--mode" && i + 1 < argc)
     {
       const std::string command = argv[i + 1];
@@ -458,27 +490,8 @@ int main(int argc, char** argv)
   LoadConfigFile(cfgPath, cfg);
   ParseArgs(argc, argv, cfg);
 
-  if (cfg.layout != "auto" && cfg.layout != "5.1")
-  {
-    std::fprintf(stderr, "invalid layout \"%s\"; expected auto or 5.1\n", cfg.layout.c_str());
+  if (!ValidateConfig(cfg))
     return 1;
-  }
-  if (cfg.stereoProcessing != "receiver" && cfg.stereoProcessing != "music")
-  {
-    std::fprintf(stderr,
-                 "invalid stereo_processing \"%s\"; expected receiver or music\n",
-                 cfg.stereoProcessing.c_str());
-    return 1;
-  }
-  if (cfg.musicSurroundGain < 0.0 || cfg.musicSurroundGain > 2.0 ||
-      cfg.musicWidthFloor < 0.0 || cfg.musicWidthFloor > 1.0 ||
-      cfg.musicCenterTrebleGain < 0.0 || cfg.musicCenterTrebleGain > 1.0 ||
-      cfg.musicCenterTrebleHz < 200.0 || cfg.musicCenterTrebleHz > 12000.0 ||
-      cfg.musicRearHighpassHz < 0.0 || cfg.musicRearHighpassHz > 1000.0)
-  {
-    std::fprintf(stderr, "invalid OHL Music tuning value\n");
-    return 1;
-  }
 
   if (cfg.listDevices)
   {
@@ -541,11 +554,12 @@ int main(int argc, char** argv)
   std::atomic<RuntimeAudioMode> desired{RuntimeAudioMode::Surround};
   std::atomic<RuntimeAudioMode> current{RuntimeAudioMode::Starting};
   std::atomic_int requestedExitCode{0};
+  std::atomic_bool reloadConfig{false};
   std::string lastError;
   std::mutex errorMutex;
 
   ModeControlServer control;
-  if (!control.Start(&desired, &current, &lastError, &errorMutex))
+  if (!control.Start(&desired, &current, &lastError, &errorMutex, &reloadConfig))
   {
     std::fprintf(stderr, "[ModeControl] failed to start control server\n");
     CloseHandle(singleton);
@@ -571,6 +585,31 @@ int main(int argc, char** argv)
   auto startTime = std::chrono::steady_clock::now();
   while (!g_stop.load())
   {
+    if (reloadConfig.exchange(false))
+    {
+      Config refreshed;
+      LoadConfigFile(cfgPath, refreshed);
+      ParseArgs(argc, argv, refreshed);
+
+      if (ValidateConfig(refreshed))
+      {
+        cfg = refreshed;
+        std::printf("[Config] reloaded from %s\n", cfgPath.c_str());
+
+        if (desired.load() == RuntimeAudioMode::Surround)
+        {
+          current.store(RuntimeAudioMode::Starting);
+          pipeline.reset();
+          nextRetry = std::chrono::steady_clock::now();
+          std::printf("[Config] rebuilding surround pipeline with updated settings\n");
+        }
+      }
+      else
+      {
+        std::fprintf(stderr, "[Config] reload rejected; keeping previous runtime settings\n");
+      }
+    }
+
     const RuntimeAudioMode want = desired.load();
     const RuntimeAudioMode have = current.load();
 
