@@ -68,7 +68,8 @@ static std::string Trim(const std::string& s)
 // Load a key=value config file (# or ; comments). CLI args override these.
 // Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
 //       layout, auto_threshold_db, auto_hold_ms, tray, stereo_processing,
-//       music_surround_gain, music_distance_*_in.
+//       music_surround_gain, music_width_floor, music_center_treble_*,
+ //       music_rear_highpass_hz, music_distance_*_in.
 static void LoadConfigFile(const std::string& path, Config& c)
 {
   std::ifstream f(path);
@@ -97,6 +98,10 @@ static void LoadConfigFile(const std::string& path, Config& c)
     else if (k == "auto_hold_ms")      c.autoHoldMs = (uint32_t)std::strtoul(v.c_str(), nullptr, 10);
     else if (k == "stereo_processing")  c.stereoProcessing = v;
     else if (k == "music_surround_gain") c.musicSurroundGain = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_width_floor") c.musicWidthFloor = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_center_treble_gain") c.musicCenterTrebleGain = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_center_treble_hz") c.musicCenterTrebleHz = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_rear_highpass_hz") c.musicRearHighpassHz = std::strtod(v.c_str(), nullptr);
     else if (k == "music_distance_fl_in") c.musicDistanceFlIn = std::strtod(v.c_str(), nullptr);
     else if (k == "music_distance_fr_in") c.musicDistanceFrIn = std::strtod(v.c_str(), nullptr);
     else if (k == "music_distance_c_in")  c.musicDistanceCIn = std::strtod(v.c_str(), nullptr);
@@ -147,6 +152,10 @@ static void ParseArgs(int argc, char** argv, Config& c)
       c.stereoProcessing = argv[++i];
     else if (a == "--music-surround-gain" && i + 1 < argc)
       c.musicSurroundGain = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-width-floor" && i + 1 < argc)
+      c.musicWidthFloor = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-center-treble-gain" && i + 1 < argc)
+      c.musicCenterTrebleGain = std::strtod(argv[++i], nullptr);
     else
       std::fprintf(stderr, "ignoring unknown arg: %s\n", a.c_str());
   }
@@ -308,6 +317,10 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   pp.autoHoldMs = cfg.autoHoldMs;
   pp.musicStereo = (cfg.stereoProcessing == "music");
   pp.musicSurroundGain = cfg.musicSurroundGain;
+  pp.musicWidthFloor = cfg.musicWidthFloor;
+  pp.musicCenterTrebleGain = cfg.musicCenterTrebleGain;
+  pp.musicCenterTrebleHz = cfg.musicCenterTrebleHz;
+  pp.musicRearHighpassHz = cfg.musicRearHighpassHz;
   pp.musicDistanceInches = {{
       cfg.musicDistanceFlIn, cfg.musicDistanceFrIn, cfg.musicDistanceCIn,
       cfg.musicDistanceLfeIn, cfg.musicDistanceSlIn, cfg.musicDistanceSrIn}};
@@ -319,8 +332,8 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   if (pp.autoLayout)
   {
     if (pp.musicStereo)
-      std::printf("Stereo  : OHL Music 5.1 (phantom center, surround gain %.2f)\n",
-                  pp.musicSurroundGain);
+      std::printf("Stereo  : OHL Music 5.1 (adaptive %.2f, width %.2f, center sparkle %.2f)\n",
+                  pp.musicSurroundGain, pp.musicWidthFloor, pp.musicCenterTrebleGain);
     else
       std::printf("Stereo  : receiver processing via genuine AC3 2.0\n");
   }
@@ -457,9 +470,13 @@ int main(int argc, char** argv)
                  cfg.stereoProcessing.c_str());
     return 1;
   }
-  if (cfg.musicSurroundGain < 0.0 || cfg.musicSurroundGain > 2.0)
+  if (cfg.musicSurroundGain < 0.0 || cfg.musicSurroundGain > 2.0 ||
+      cfg.musicWidthFloor < 0.0 || cfg.musicWidthFloor > 1.0 ||
+      cfg.musicCenterTrebleGain < 0.0 || cfg.musicCenterTrebleGain > 1.0 ||
+      cfg.musicCenterTrebleHz < 200.0 || cfg.musicCenterTrebleHz > 12000.0 ||
+      cfg.musicRearHighpassHz < 0.0 || cfg.musicRearHighpassHz > 1000.0)
   {
-    std::fprintf(stderr, "music_surround_gain must be between 0.0 and 2.0\n");
+    std::fprintf(stderr, "invalid OHL Music tuning value\n");
     return 1;
   }
 
