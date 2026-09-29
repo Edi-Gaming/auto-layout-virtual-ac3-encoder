@@ -30,6 +30,7 @@ private:
   void UpdateIcon(bool force = false);
   void ShowContextMenu();
   void LaunchSwitcher();
+  void LaunchMusicSettings();
   void OpenLog();
 
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
