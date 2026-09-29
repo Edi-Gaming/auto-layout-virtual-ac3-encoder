@@ -1,9 +1,9 @@
-// OhlMusicUpmixer.h — conservative stereo -> discrete 5.1 music spatializer.
+// OhlMusicUpmixer.h — stereo -> discrete 5.1 OHL Music spatializer.
 //
-// OHL Music is intentionally separate from FFmpeg's generic surround filter and from the
-// hardware-validated native/auto AC3 paths. It preserves the original L/R program in FL/FR,
-// keeps C and LFE silent for a phantom-center-first presentation, and derives a conservative
-// anti-correlated surround bed from stereo difference information.
+// v0.2 keeps the original L/R program in FL/FR, adds a permanent low-level decorrelated width
+// bed so ordinary modern stereo never collapses to "fronts only", layers correlation-aware
+// ambience extraction on top, and optionally feeds only centered high-frequency information to
+// the physical center. LFE remains silent.
 //
 // Output channel order matches Windows/AC3 5.1-back: FL FR FC LFE BL BR.
 #pragma once
@@ -21,14 +21,22 @@ public:
   {
     int sampleRate = 48000;
 
-    // 0..1-ish scalar applied to extracted spatial information. 0.55 is intentionally a little
-    // more enveloping than the receiver's current PLII Music presentation without making the
-    // surrounds compete with the fronts.
-    float surroundGain = 0.55f;
+    // Maximum adaptive L-R ambience contribution.
+    float surroundGain = 0.78f;
+
+    // Always-present same-side width bed after center suppression + decorrelation.
+    // This is deliberately independent of the block analyser so transients cannot gate it off.
+    float widthFloor = 0.22f;
+
+    // Gain for centered, high-passed content sent to the physical center. Intended to use the
+    // Bose cube only for "sparkle"/intelligibility rather than making it carry the whole vocal.
+    float centerTrebleGain = 0.18f;
+    float centerTrebleHz = 2400.0f;
+
+    // Rear channels are high-passed so bass stays anchored to FL/FR.
+    float rearHighpassHz = 140.0f;
 
     // Listening-position distances in inches, channel order FL FR FC LFE SL SR.
-    // Defaults are Edi's 2026-09-29 measurements. Delay is added to nearer speakers so all
-    // direct channels are referenced to the farthest measured speaker.
     std::array<float, kChannels> distanceInches{{33.0f, 33.0f, 30.0f, 33.0f, 27.0f, 33.0f}};
   };
 
@@ -54,9 +62,37 @@ private:
     size_t pos = 0;
   };
 
+  struct OnePoleHighpass
+  {
+    void Configure(float hz, int sampleRate);
+    void Reset();
+    float Process(float x);
+
+    float alpha = 0.0f;
+    float x1 = 0.0f;
+    float y1 = 0.0f;
+  };
+
+  struct OnePoleAllpass
+  {
+    void Configure(float coefficient);
+    void Reset();
+    float Process(float x);
+
+    float a = 0.0f;
+    float x1 = 0.0f;
+    float y1 = 0.0f;
+  };
+
   Params params_{};
   std::array<int, kChannels> delaySamples_{{0, 0, 0, 0, 0, 0}};
   std::array<DelayLine, kChannels> delays_;
+
+  OnePoleHighpass rearHpL_;
+  OnePoleHighpass rearHpR_;
+  OnePoleHighpass centerHp_;
+  OnePoleAllpass rearApL_;
+  OnePoleAllpass rearApR_;
 
   bool gainInitialized_ = false;
   float surroundAmount_ = 0.0f;
