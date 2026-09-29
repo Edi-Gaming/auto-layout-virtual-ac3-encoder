@@ -2,6 +2,7 @@
 #include "BrandIcon.h"
 
 #include <windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <cstdio>
