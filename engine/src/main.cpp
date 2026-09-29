@@ -67,7 +67,8 @@ static std::string Trim(const std::string& s)
 
 // Load a key=value config file (# or ; comments). CLI args override these.
 // Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
-//       layout, auto_threshold_db, auto_hold_ms, tray.
+//       layout, auto_threshold_db, auto_hold_ms, tray, stereo_processing,
+//       music_surround_gain, music_distance_*_in.
 static void LoadConfigFile(const std::string& path, Config& c)
 {
   std::ifstream f(path);
@@ -94,6 +95,14 @@ static void LoadConfigFile(const std::string& path, Config& c)
     else if (k == "layout")            c.layout = v;
     else if (k == "auto_threshold_db") c.autoThresholdDb = std::strtod(v.c_str(), nullptr);
     else if (k == "auto_hold_ms")      c.autoHoldMs = (uint32_t)std::strtoul(v.c_str(), nullptr, 10);
+    else if (k == "stereo_processing")  c.stereoProcessing = v;
+    else if (k == "music_surround_gain") c.musicSurroundGain = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_distance_fl_in") c.musicDistanceFlIn = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_distance_fr_in") c.musicDistanceFrIn = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_distance_c_in")  c.musicDistanceCIn = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_distance_lfe_in") c.musicDistanceLfeIn = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_distance_sl_in") c.musicDistanceSlIn = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_distance_sr_in") c.musicDistanceSrIn = std::strtod(v.c_str(), nullptr);
     else if (k == "tray")               c.tray = truthy(v);
   }
   std::printf("Loaded config: %s\n", path.c_str());
@@ -134,6 +143,10 @@ static void ParseArgs(int argc, char** argv, Config& c)
       c.autoThresholdDb = std::strtod(argv[++i], nullptr);
     else if (a == "--auto-hold-ms" && i + 1 < argc)
       c.autoHoldMs = (uint32_t)std::strtoul(argv[++i], nullptr, 10);
+    else if (a == "--stereo-processing" && i + 1 < argc)
+      c.stereoProcessing = argv[++i];
+    else if (a == "--music-surround-gain" && i + 1 < argc)
+      c.musicSurroundGain = std::strtod(argv[++i], nullptr);
     else
       std::fprintf(stderr, "ignoring unknown arg: %s\n", a.c_str());
   }
@@ -293,11 +306,24 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   pp.autoLayout = (cfg.layout == "auto");
   pp.autoThresholdDb = cfg.autoThresholdDb;
   pp.autoHoldMs = cfg.autoHoldMs;
+  pp.musicStereo = (cfg.stereoProcessing == "music");
+  pp.musicSurroundGain = cfg.musicSurroundGain;
+  pp.musicDistanceInches = {{
+      cfg.musicDistanceFlIn, cfg.musicDistanceFrIn, cfg.musicDistanceCIn,
+      cfg.musicDistanceLfeIn, cfg.musicDistanceSlIn, cfg.musicDistanceSrIn}};
 
   std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
   if (pp.autoLayout)
     std::printf(" (threshold %.1f dBFS, hold %u ms)", pp.autoThresholdDb, pp.autoHoldMs);
   std::printf("\n");
+  if (pp.autoLayout)
+  {
+    if (pp.musicStereo)
+      std::printf("Stereo  : OHL Music 5.1 (phantom center, surround gain %.2f)\n",
+                  pp.musicSurroundGain);
+    else
+      std::printf("Stereo  : receiver processing via genuine AC3 2.0\n");
+  }
 
   p->output = std::make_unique<WasapiPassthrough>();
   if (!p->output->Init(outDev.Get(), p->ring.get(), cf, pp))
@@ -422,6 +448,18 @@ int main(int argc, char** argv)
   if (cfg.layout != "auto" && cfg.layout != "5.1")
   {
     std::fprintf(stderr, "invalid layout \"%s\"; expected auto or 5.1\n", cfg.layout.c_str());
+    return 1;
+  }
+  if (cfg.stereoProcessing != "receiver" && cfg.stereoProcessing != "music")
+  {
+    std::fprintf(stderr,
+                 "invalid stereo_processing \"%s\"; expected receiver or music\n",
+                 cfg.stereoProcessing.c_str());
+    return 1;
+  }
+  if (cfg.musicSurroundGain < 0.0 || cfg.musicSurroundGain > 2.0)
+  {
+    std::fprintf(stderr, "music_surround_gain must be between 0.0 and 2.0\n");
     return 1;
   }
 
