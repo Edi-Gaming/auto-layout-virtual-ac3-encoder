@@ -48,10 +48,25 @@ struct Config
   std::string stereoProcessing = "receiver";
   double musicSurroundGain = 0.70;
   double musicWidthFloor = 0.16;
+
+  double musicAmbienceLowWeight = 0.08;
+  double musicAmbienceMidWeight = 0.46;
+  double musicAmbienceHighWeight = 0.46;
+  double musicAmbienceAttackMs = 100.0;
+  double musicAmbienceReleaseMs = 520.0;
+
   double musicDirectReject = 0.78;
+  double musicDirectThreshold = 1.45;
+  double musicDirectRecoveryMs = 18.0;
+
   double musicCenterTrebleGain = 0.18;
   double musicCenterTrebleHz = 2400.0;
+  double musicCenterLowpassHz = 16000.0;
+
   double musicRearHighpassHz = 160.0;
+  double musicRearLowpassHz = 18000.0;
+  double musicRearLeftTrim = 1.0;
+  double musicRearRightTrim = 1.0;
 
   // Listening-position speaker distances in inches (Edi's 2026-09-29 measurements).
   // The music DSP delays nearer speakers to the farthest measured distance before AC3 encode.
