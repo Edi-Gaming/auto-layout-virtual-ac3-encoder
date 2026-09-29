@@ -46,7 +46,11 @@ struct Config
   //   "music"    — OHL Music: preserve FL/FR, phantom center (silent C), no synthesized LFE,
   //                derive a conservative surround bed, then emit discrete AC3 5.1.
   std::string stereoProcessing = "receiver";
-  double musicSurroundGain = 0.55;
+  double musicSurroundGain = 0.78;
+  double musicWidthFloor = 0.22;
+  double musicCenterTrebleGain = 0.18;
+  double musicCenterTrebleHz = 2400.0;
+  double musicRearHighpassHz = 140.0;
 
   // Listening-position speaker distances in inches (Edi's 2026-09-29 measurements).
   // The music DSP delays nearer speakers to the farthest measured distance before AC3 encode.
