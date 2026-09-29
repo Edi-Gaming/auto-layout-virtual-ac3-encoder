@@ -39,4 +39,21 @@ struct Config
   std::string layout = "auto";
   double   autoThresholdDb = -60.0;
   uint32_t autoHoldMs = 2000;
+
+  // Stereo policy while layout=auto:
+  //   "receiver" — current hardware-validated behavior: emit genuine AC3 2.0 and let the AVR
+  //                apply PLII/A.F.D.
+  //   "music"    — OHL Music: preserve FL/FR, phantom center (silent C), no synthesized LFE,
+  //                derive a conservative surround bed, then emit discrete AC3 5.1.
+  std::string stereoProcessing = "receiver";
+  double musicSurroundGain = 0.55;
+
+  // Listening-position speaker distances in inches (Edi's 2026-09-29 measurements).
+  // The music DSP delays nearer speakers to the farthest measured distance before AC3 encode.
+  double musicDistanceFlIn = 33.0;
+  double musicDistanceFrIn = 33.0;
+  double musicDistanceCIn  = 30.0;
+  double musicDistanceLfeIn = 33.0; // unused while LFE is silent, kept for future profiles
+  double musicDistanceSlIn = 27.0;
+  double musicDistanceSrIn = 33.0;
 };
