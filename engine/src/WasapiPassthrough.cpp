@@ -132,16 +132,57 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
 
   if (params_.autoLayout)
   {
-    // In auto mode stereo stays genuinely stereo. Do not run the FFmpeg surround upmixer here;
-    // the point is to hand AC3 2.0 to the receiver and let its own A.F.D./PLII logic work.
-    ep.outputLayout = SpdifEncoder::OutputLayout::Stereo;
-    ep.upmix = SpdifEncoder::Upmix::Off;
-    encOk = encStereo_.Init(ep);
-    if (!encOk || encStereo_.FramesPerPacket() != framesPerPacket_)
+    if (params_.musicStereo)
     {
-      std::fprintf(stderr, "[WasapiPassthrough] failed to initialize matching AC3 stereo encoder\n");
-      av_channel_layout_uninit(&ep.inLayout);
-      return false;
+      // OHL Music produces its own interleaved 5.1 float block. Keep that encoder completely
+      // separate from the native multichannel encoder so the proven 5.1 path remains untouched.
+      SpdifEncoder::Params mp;
+      mp.sampleRate = rate;
+      mp.bitRate = params_.bitRate;
+      mp.inSampleFmt = AV_SAMPLE_FMT_FLT;
+      mp.upmix = SpdifEncoder::Upmix::Off;
+      mp.outputLayout = SpdifEncoder::OutputLayout::Surround51;
+      AVChannelLayout musicLayout = AV_CHANNEL_LAYOUT_5POINT1_BACK;
+      av_channel_layout_copy(&mp.inLayout, &musicLayout);
+
+      encOk = encMusic51_.Init(mp);
+      av_channel_layout_uninit(&mp.inLayout);
+      if (!encOk || encMusic51_.FramesPerPacket() != framesPerPacket_)
+      {
+        std::fprintf(stderr, "[OhlMusic] failed to initialize dedicated AC3 5.1 encoder\n");
+        av_channel_layout_uninit(&ep.inLayout);
+        return false;
+      }
+
+      OhlMusicUpmixer::Params op;
+      op.sampleRate = rate;
+      op.surroundGain = static_cast<float>(params_.musicSurroundGain);
+      for (size_t i = 0; i < op.distanceInches.size(); ++i)
+        op.distanceInches[i] = static_cast<float>(params_.musicDistanceInches[i]);
+
+      if (!musicUpmixer_.Init(op))
+      {
+        std::fprintf(stderr, "[OhlMusic] invalid spatializer configuration\n");
+        av_channel_layout_uninit(&ep.inLayout);
+        return false;
+      }
+
+      const auto& d = musicUpmixer_.DelaySamples();
+      std::printf("[OhlMusic] enabled: gain %.2f, delay samples FL=%d FR=%d C=%d LFE=%d SL=%d SR=%d\n",
+                  params_.musicSurroundGain, d[0], d[1], d[2], d[3], d[4], d[5]);
+    }
+    else
+    {
+      // Receiver policy: stereo stays genuinely stereo so the AVR can run PLII/A.F.D.
+      ep.outputLayout = SpdifEncoder::OutputLayout::Stereo;
+      ep.upmix = SpdifEncoder::Upmix::Off;
+      encOk = encStereo_.Init(ep);
+      if (!encOk || encStereo_.FramesPerPacket() != framesPerPacket_)
+      {
+        std::fprintf(stderr, "[WasapiPassthrough] failed to initialize matching AC3 stereo encoder\n");
+        av_channel_layout_uninit(&ep.inLayout);
+        return false;
+      }
     }
   }
   av_channel_layout_uninit(&ep.inLayout);
@@ -161,9 +202,10 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
   {
     const double actualHoldMs =
         1000.0 * static_cast<double>(holdPackets_ * framesPerPacket_) / static_cast<double>(rate);
-    std::printf("[AutoLayout] enabled: threshold %.1f dBFS, 5.1->2.0 hold %.0f ms, "
-                "%zu non-front channel(s) monitored\n",
-                thresholdDb, actualHoldMs, activityChannels_.size());
+    std::printf("[AutoLayout] enabled: threshold %.1f dBFS, native-5.1 hold %.0f ms, "
+                "%zu non-front channel(s) monitored, stereo policy=%s\n",
+                thresholdDb, actualHoldMs, activityChannels_.size(),
+                params_.musicStereo ? "OHL Music 5.1" : "receiver AC3 2.0");
   }
   else
   {
@@ -177,6 +219,11 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
   staging_.resize(pktBytes);
   silence_.assign(pktBytes, 0);
   burst_.resize(kBurstBytes);
+  if (params_.autoLayout && params_.musicStereo)
+  {
+    musicStereo_.resize(static_cast<size_t>(framesPerPacket_) * 2);
+    music51_.resize(static_cast<size_t>(framesPerPacket_) * OhlMusicUpmixer::kChannels);
+  }
   return true;
 }
 
@@ -278,10 +325,52 @@ bool WasapiPassthrough::PacketHasNonFrontActivity(const uint8_t* in, double& pea
   return peak >= thresholdLinear_;
 }
 
-SpdifEncoder& WasapiPassthrough::SelectEncoder(const uint8_t* in, bool haveRealInput)
+void WasapiPassthrough::ExtractFrontStereoFloat(const uint8_t* in, float* stereo) const
+{
+  if (!in || !stereo || capFmt_.channels == 0)
+    return;
+
+  const size_t bytesPerSample = capFmt_.bits / 8;
+  const unsigned rightChannel = capFmt_.channels > 1 ? 1u : 0u;
+
+  auto readSample = [&](int frame, unsigned ch) -> float {
+    const size_t frameBase =
+        static_cast<size_t>(frame) * static_cast<size_t>(capFmt_.channels) * bytesPerSample;
+    const uint8_t* p = in + frameBase + static_cast<size_t>(ch) * bytesPerSample;
+
+    if (capFmt_.isFloat && capFmt_.bits == 32)
+    {
+      float s = 0.0f;
+      std::memcpy(&s, p, sizeof s);
+      return std::isfinite(s) ? s : 0.0f;
+    }
+    if (!capFmt_.isFloat && capFmt_.bits == 16)
+    {
+      int16_t s = 0;
+      std::memcpy(&s, p, sizeof s);
+      return static_cast<float>(static_cast<double>(s) / 32768.0);
+    }
+    if (!capFmt_.isFloat && capFmt_.bits == 32)
+    {
+      int32_t s = 0;
+      std::memcpy(&s, p, sizeof s);
+      return static_cast<float>(static_cast<double>(s) / 2147483648.0);
+    }
+    return 0.0f;
+  };
+
+  for (int frame = 0; frame < framesPerPacket_; ++frame)
+  {
+    stereo[2 * static_cast<size_t>(frame)] = readSample(frame, 0);
+    stereo[2 * static_cast<size_t>(frame) + 1] = readSample(frame, rightChannel);
+  }
+}
+
+WasapiPassthrough::AutoPayload
+WasapiPassthrough::SelectAutoPayload(const uint8_t* in, bool haveRealInput)
 {
   if (!params_.autoLayout)
-    return enc51_;
+    return AutoPayload::Native51;
 
   if (haveRealInput)
   {
@@ -294,7 +383,13 @@ SpdifEncoder& WasapiPassthrough::SelectEncoder(const uint8_t* in, bool haveRealI
       if (!activeIsSurround_)
       {
         activeIsSurround_ = true;
-        std::fprintf(stderr, "[AutoLayout] 2.0 -> 5.1 (non-front peak %.1f dBFS)\n", PeakDb(peak));
+        if (params_.musicStereo)
+          std::fprintf(stderr,
+                       "[AutoLayout] OHL Music -> native 5.1 (non-front peak %.1f dBFS)\n",
+                       PeakDb(peak));
+        else
+          std::fprintf(stderr, "[AutoLayout] 2.0 -> 5.1 (non-front peak %.1f dBFS)\n",
+                       PeakDb(peak));
         std::fflush(stderr);
       }
     }
@@ -304,14 +399,22 @@ SpdifEncoder& WasapiPassthrough::SelectEncoder(const uint8_t* in, bool haveRealI
       {
         activeIsSurround_ = false;
         quietPackets_ = 0;
-        std::fprintf(stderr, "[AutoLayout] 5.1 -> 2.0 (non-front channels quiet for %u ms)\n",
-                     params_.autoHoldMs);
+        if (params_.musicStereo)
+          std::fprintf(stderr,
+                       "[AutoLayout] native 5.1 -> OHL Music (non-front channels quiet for %u ms)\n",
+                       params_.autoHoldMs);
+        else
+          std::fprintf(stderr,
+                       "[AutoLayout] 5.1 -> 2.0 (non-front channels quiet for %u ms)\n",
+                       params_.autoHoldMs);
         std::fflush(stderr);
       }
     }
   }
 
-  return activeIsSurround_ ? enc51_ : encStereo_;
+  if (activeIsSurround_)
+    return AutoPayload::Native51;
+  return params_.musicStereo ? AutoPayload::Music51 : AutoPayload::ReceiverStereo;
 }
 
 bool WasapiPassthrough::InitExclusive(int rate)
@@ -429,8 +532,30 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
       in = silence_.data();
     }
 
-    SpdifEncoder& enc = SelectEncoder(in, haveRealInput);
-    int n = enc.EncodePacket(in, burst_.data(), static_cast<int>(burst_.size()));
+    const AutoPayload payload = SelectAutoPayload(in, haveRealInput);
+    SpdifEncoder* enc = nullptr;
+    const uint8_t* encodeIn = in;
+
+    switch (payload)
+    {
+      case AutoPayload::Native51:
+        enc = &enc51_;
+        break;
+
+      case AutoPayload::ReceiverStereo:
+        enc = &encStereo_;
+        break;
+
+      case AutoPayload::Music51:
+        ExtractFrontStereoFloat(in, musicStereo_.data());
+        musicUpmixer_.ProcessStereo(
+            musicStereo_.data(), static_cast<size_t>(framesPerPacket_), music51_.data());
+        encodeIn = reinterpret_cast<const uint8_t*>(music51_.data());
+        enc = &encMusic51_;
+        break;
+    }
+
+    int n = enc->EncodePacket(encodeIn, burst_.data(), static_cast<int>(burst_.size()));
     if (n <= 0)
     {
       std::memset(burst_.data(), 0, kBurstBytes); // priming / error: stuff zeros this slot
@@ -454,6 +579,8 @@ bool WasapiPassthrough::Start()
   minAvail_ = 0xFFFFFFFFu;
   activeIsSurround_ = false;
   quietPackets_ = 0;
+  if (params_.autoLayout && params_.musicStereo)
+    musicUpmixer_.Reset();
 
   // Pre-fill the first buffer (primes the encoder and avoids an initial underrun) before Start.
   BYTE* out = nullptr;
