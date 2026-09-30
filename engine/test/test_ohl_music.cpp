@@ -413,7 +413,7 @@ TEST_CASE("OHL Music center low-pass bounds the sparkle band")
 
 
 
-TEST_CASE("OHL Music v0.7 removes shared center before sparse rear extraction")
+TEST_CASE("OHL Music v0.8 removes shared center before sparse rear extraction")
 {
   constexpr size_t frames = 4096;
   std::vector<float> in(frames * 2);
@@ -446,12 +446,12 @@ TEST_CASE("OHL Music v0.7 removes shared center before sparse rear extraction")
   MESSAGE("shared-center sparse rear RMS left=" << left << " right=" << right);
 
   CHECK(left > 0.0008);
-  CHECK(left < 0.002);
-  CHECK(right < 0.002);
+  CHECK(left < 0.0025);
+  CHECK(right < 0.0025);
 }
 
 
-TEST_CASE("OHL Music v0.7 front lock suppresses widened vocal residue")
+TEST_CASE("OHL Music v0.8 front lock suppresses widened vocal residue")
 {
   constexpr size_t frames = 4096;
   std::vector<float> in(frames * 2);
@@ -496,7 +496,7 @@ TEST_CASE("OHL Music v0.7 front lock suppresses widened vocal residue")
 }
 
 
-TEST_CASE("OHL Music v0.7 front lock leaves decorrelated ambience available")
+TEST_CASE("OHL Music v0.8 front lock leaves decorrelated ambience available")
 {
   constexpr size_t frames = 4096;
   const auto in = MakeSineStereo(frames, 9000.0, true);
@@ -531,7 +531,7 @@ TEST_CASE("OHL Music v0.7 front lock leaves decorrelated ambience available")
 }
 
 
-TEST_CASE("OHL Music v0.7 preserves rear asymmetry instead of mirroring direct side energy")
+TEST_CASE("OHL Music v0.8 preserves rear asymmetry instead of mirroring direct side energy")
 {
   constexpr size_t frames = 4096;
   const auto in = MakeSineStereo(frames, 8000.0, false, false);
@@ -587,7 +587,7 @@ TEST_CASE("OHL Music preserves measured speaker-distance alignment")
 
 
 
-TEST_CASE("OHL Music v0.7 rear budget prevents a second pair of mains")
+TEST_CASE("OHL Music v0.8 rear budget prevents a second pair of mains")
 {
   constexpr size_t frames = 4096;
   std::vector<float> in(frames * 2);
@@ -624,7 +624,7 @@ TEST_CASE("OHL Music v0.7 rear budget prevents a second pair of mains")
   CHECK(rear <= front * 0.105);
 }
 
-TEST_CASE("OHL Music v0.7 diffuse gate keeps a sustained hard-panned instrument subtle")
+TEST_CASE("OHL Music v0.8 diffuse gate keeps a sustained hard-panned instrument subtle")
 {
   constexpr size_t frames = 4096;
   const auto in = MakeSineStereo(frames, 1300.0, false, false, 0.35f);
@@ -634,7 +634,7 @@ TEST_CASE("OHL Music v0.7 diffuse gate keeps a sustained hard-panned instrument 
   p.centerTrebleGain = 0.0f;
   p.widthFloor = 0.16f;
   p.surroundGain = 0.70f;
-  p.diffuseThreshold = 0.18f;
+  p.diffuseThreshold = 0.10f;
   p.frontLock = 0.0f;
   p.directReject = 0.0f;
   p.rearBudget = 1.0f;
@@ -649,4 +649,47 @@ TEST_CASE("OHL Music v0.7 diffuse gate keeps a sustained hard-panned instrument 
 
   CHECK(rear > 0.001);
   CHECK(rear < front * 0.08);
+}
+
+
+TEST_CASE("OHL Music v0.8 gives a moderate stereo mix an audible but subordinate rear bed")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float common =
+        0.24f * static_cast<float>(std::sin(2.0 * kPi * 740.0 * tt));
+    const float leftDetail =
+        0.085f * static_cast<float>(std::sin(2.0 * kPi * 2350.0 * tt + 0.20));
+    const float rightDetail =
+        0.085f * static_cast<float>(std::sin(2.0 * kPi * 3270.0 * tt + 0.85));
+    const float sharedAir =
+        0.035f * static_cast<float>(std::sin(2.0 * kPi * 7200.0 * tt));
+
+    in[2 * i] = common + leftDetail + sharedAir;
+    in[2 * i + 1] = common + rightDetail - 0.7f * sharedAir;
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double front =
+      0.5 * (ChannelRms(out, 0, 512) + ChannelRms(out, 1, 512));
+  const double rear =
+      0.5 * (ChannelRms(out, 4, 512) + ChannelRms(out, 5, 512));
+  const double ratio = rear / std::max(front, 1.0e-12);
+
+  MESSAGE("moderate-stereo front RMS=" << front << " rear RMS=" << rear
+          << " rear/front=" << ratio);
+
+  CHECK(ratio > 0.04);
+  CHECK(ratio <= 0.225);
 }
