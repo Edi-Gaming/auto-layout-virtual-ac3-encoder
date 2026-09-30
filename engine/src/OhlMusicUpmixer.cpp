@@ -241,10 +241,10 @@ bool OhlMusicUpmixer::Init(const Params& params)
   rearHpR_.Configure(params_.rearHighpassHz, params_.sampleRate);
   rearLpL_.Configure(params_.rearLowpassHz, params_.sampleRate);
   rearLpR_.Configure(params_.rearLowpassHz, params_.sampleRate);
-  for (auto& f : rearVoiceHpL_) f.Configure(params_.frontLockLowHz, params_.sampleRate);
-  for (auto& f : rearVoiceHpR_) f.Configure(params_.frontLockLowHz, params_.sampleRate);
-  for (auto& f : rearVoiceLpL_) f.Configure(params_.frontLockHighHz, params_.sampleRate);
-  for (auto& f : rearVoiceLpR_) f.Configure(params_.frontLockHighHz, params_.sampleRate);
+  for (auto& f : rearVoiceLowSplitL_) f.Configure(params_.frontLockLowHz, params_.sampleRate);
+  for (auto& f : rearVoiceLowSplitR_) f.Configure(params_.frontLockLowHz, params_.sampleRate);
+  for (auto& f : rearVoiceHighSplitL_) f.Configure(params_.frontLockHighHz, params_.sampleRate);
+  for (auto& f : rearVoiceHighSplitR_) f.Configure(params_.frontLockHighHz, params_.sampleRate);
   centerHp_.Configure(params_.centerTrebleHz, params_.sampleRate);
   centerLp_.Configure(params_.centerLowpassHz, params_.sampleRate);
 
@@ -270,10 +270,10 @@ void OhlMusicUpmixer::Reset()
   rearHpR_.Reset();
   rearLpL_.Reset();
   rearLpR_.Reset();
-  for (auto& f : rearVoiceHpL_) f.Reset();
-  for (auto& f : rearVoiceHpR_) f.Reset();
-  for (auto& f : rearVoiceLpL_) f.Reset();
-  for (auto& f : rearVoiceLpR_) f.Reset();
+  for (auto& f : rearVoiceLowSplitL_) f.Reset();
+  for (auto& f : rearVoiceLowSplitR_) f.Reset();
+  for (auto& f : rearVoiceHighSplitL_) f.Reset();
+  for (auto& f : rearVoiceHighSplitR_) f.Reset();
   centerHp_.Reset();
   centerLp_.Reset();
   eventFast_.Reset();
@@ -377,25 +377,34 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float directGain = 1.0f - params_.directReject * onset;
 
     // v0.6 rear topology:
-    //   1) identify the vocal/body band with a steep 2-pole HP + 4-pole LP,
-    //   2) remove the shared same-polarity component only inside that band,
-    //   3) directly attenuate the remaining independent vocal-band residual with Front Lock,
-    //   4) leave low-frequency asymmetry and high-frequency room/air outside the lock band.
-    //
-    // A truly mono block is forced to zero rear source before these operations.
-    float voiceBandL = l;
-    float voiceBandR = r;
-    for (auto& f : rearVoiceHpL_) voiceBandL = f.Process(voiceBandL);
-    for (auto& f : rearVoiceHpR_) voiceBandR = f.Process(voiceBandR);
-    for (auto& f : rearVoiceLpL_) voiceBandL = f.Process(voiceBandL);
-    for (auto& f : rearVoiceLpR_) voiceBandR = f.Process(voiceBandR);
+    //   1) create a steep complementary low / vocal-body / air split,
+    //   2) remove shared same-polarity content only from the vocal/body band,
+    //   3) scale the remaining independent vocal-band residual with Front Lock,
+    //   4) recombine. At Front Lock 0 and with no shared center, low+body+air reconstructs the
+    //      original channel exactly; high-frequency ambience is therefore not globally shaved.
+    float lowL = l;
+    float lowR = r;
+    for (auto& f : rearVoiceLowSplitL_) lowL = f.Process(lowL);
+    for (auto& f : rearVoiceLowSplitR_) lowR = f.Process(lowR);
+
+    const float aboveLowL = l - lowL;
+    const float aboveLowR = r - lowR;
+
+    float voiceBandL = aboveLowL;
+    float voiceBandR = aboveLowR;
+    for (auto& f : rearVoiceHighSplitL_) voiceBandL = f.Process(voiceBandL);
+    for (auto& f : rearVoiceHighSplitR_) voiceBandR = f.Process(voiceBandR);
+
+    const float airL = aboveLowL - voiceBandL;
+    const float airR = aboveLowR - voiceBandR;
 
     const float sharedVoice = SharedSamePolarity(voiceBandL, voiceBandR);
     const float residualVoiceL = voiceBandL - sharedVoice;
     const float residualVoiceR = voiceBandR - sharedVoice;
+    const float voiceGain = 1.0f - params_.frontLock;
 
-    float shapedL = l - sharedVoice - params_.frontLock * residualVoiceL;
-    float shapedR = r - sharedVoice - params_.frontLock * residualVoiceR;
+    float shapedL = lowL + voiceGain * residualVoiceL + airL;
+    float shapedR = lowR + voiceGain * residualVoiceR + airR;
     if (blockNearlyMono)
     {
       shapedL = 0.0f;
