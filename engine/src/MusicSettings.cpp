@@ -90,8 +90,8 @@ struct SettingsState
   double ambienceReleaseMs = 520.0;
 
   double frontLock = 0.88;
-  double diffuseThreshold = 0.18;
-  double rearBudget = 0.16;
+  double diffuseThreshold = 0.10;
+  double rearBudget = 0.22;
   double directReject = 0.78;
   double directThreshold = 1.45;
   double directRecoveryMs = 18.0;
@@ -440,8 +440,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 125;
       s.ambienceReleaseMs = 650;
       s.frontLock = 0.94;
-      s.diffuseThreshold = 0.22;
-      s.rearBudget = 0.13;
+      s.diffuseThreshold = 0.14;
+      s.rearBudget = 0.18;
       s.directReject = 0.58;
       s.directThreshold = 1.35;
       s.directRecoveryMs = 14;
@@ -463,8 +463,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 90;
       s.ambienceReleaseMs = 520;
       s.frontLock = 0.88;
-      s.diffuseThreshold = 0.15;
-      s.rearBudget = 0.18;
+      s.diffuseThreshold = 0.08;
+      s.rearBudget = 0.26;
       s.directReject = 0.55;
       s.directThreshold = 1.45;
       s.directRecoveryMs = 18;
@@ -486,8 +486,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 170;
       s.ambienceReleaseMs = 900;
       s.frontLock = 0.96;
-      s.diffuseThreshold = 0.12;
-      s.rearBudget = 0.20;
+      s.diffuseThreshold = 0.06;
+      s.rearBudget = 0.28;
       s.directReject = 0.65;
       s.directThreshold = 1.22;
       s.directRecoveryMs = 11;
@@ -510,8 +510,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 100;
       s.ambienceReleaseMs = 520;
       s.frontLock = 0.90;
-      s.diffuseThreshold = 0.18;
-      s.rearBudget = 0.16;
+      s.diffuseThreshold = 0.10;
+      s.rearBudget = 0.22;
       s.directReject = 0.60;
       s.directThreshold = 1.45;
       s.directRecoveryMs = 18;
@@ -604,7 +604,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.7 sparse ambience — rears add space, never become another pair of mains.",
+      Label(hwnd, L"v0.8 dual-layer ambience — audible rear space with a hard no-rear-mains ceiling.",
             21, 48, 710, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
