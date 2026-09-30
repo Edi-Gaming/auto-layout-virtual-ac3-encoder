@@ -440,6 +440,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 125;
       s.ambienceReleaseMs = 650;
       s.frontLock = 0.94;
+      s.frontLockLowHz = 250;
+      s.frontLockHighHz = 5200;
       s.directReject = 0.88;
       s.directThreshold = 1.35;
       s.directRecoveryMs = 14;
@@ -461,6 +463,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 90;
       s.ambienceReleaseMs = 520;
       s.frontLock = 0.86;
+      s.frontLockLowHz = 250;
+      s.frontLockHighHz = 5200;
       s.directReject = 0.82;
       s.directThreshold = 1.45;
       s.directRecoveryMs = 18;
@@ -482,6 +486,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 170;
       s.ambienceReleaseMs = 900;
       s.frontLock = 0.96;
+      s.frontLockLowHz = 250;
+      s.frontLockHighHz = 6000;
       s.directReject = 0.94;
       s.directThreshold = 1.22;
       s.directRecoveryMs = 11;
@@ -504,6 +510,8 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 100;
       s.ambienceReleaseMs = 520;
       s.frontLock = 0.88;
+      s.frontLockLowHz = 250;
+      s.frontLockHighHz = 5200;
       s.directReject = 0.78;
       s.directThreshold = 1.45;
       s.directRecoveryMs = 18;
@@ -596,7 +604,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.5 front-locked asymmetric ambience — Apply Live commits changes.",
+      Label(hwnd, L"v0.6 FIR vocal carve — voice/body stays front; room/air can stay behind.",
             21, 48, 710, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
@@ -610,7 +618,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Button(hwnd, kPresetNatural, L"NATURAL", 378, 73, 83);
       Button(hwnd, kPresetWide, L"WIDE", 467, 73, 72);
       Button(hwnd, kPresetAmbient, L"AMBIENT", 545, 73, 88);
-      Button(hwnd, kPresetV03, L"v0.3", 639, 73, 64);
+      Button(hwnd, kPresetV03, L"BASE", 639, 73, 64);
 
       Group(hwnd, L"Spatial field", 14, 108, 722, 260);
       Label(hwnd, L"Adaptive ambience", 30, 136, 150, 22);
@@ -741,7 +749,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
         const wchar_t* name = id == kPresetNatural ? L"Natural" :
                               id == kPresetWide ? L"Wide" :
-                              id == kPresetAmbient ? L"Ambient" : L"v0.3 Baseline";
+                              id == kPresetAmbient ? L"Ambient" : L"Baseline";
         std::wstring msgText = std::wstring(name) + L" loaded into controls. Press Apply Live to audition.";
         SetDlgItemTextW(hwnd, kStatus, msgText.c_str());
         return 0;
