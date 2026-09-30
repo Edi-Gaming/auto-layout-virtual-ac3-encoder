@@ -241,10 +241,10 @@ bool OhlMusicUpmixer::Init(const Params& params)
   rearHpR_.Configure(params_.rearHighpassHz, params_.sampleRate);
   rearLpL_.Configure(params_.rearLowpassHz, params_.sampleRate);
   rearLpR_.Configure(params_.rearLowpassHz, params_.sampleRate);
-  rearVoiceLowL_.Configure(params_.frontLockLowHz, params_.sampleRate);
-  rearVoiceLowR_.Configure(params_.frontLockLowHz, params_.sampleRate);
-  rearVoiceHighL_.Configure(params_.frontLockHighHz, params_.sampleRate);
-  rearVoiceHighR_.Configure(params_.frontLockHighHz, params_.sampleRate);
+  for (auto& f : rearVoiceHpL_) f.Configure(params_.frontLockLowHz, params_.sampleRate);
+  for (auto& f : rearVoiceHpR_) f.Configure(params_.frontLockLowHz, params_.sampleRate);
+  for (auto& f : rearVoiceLpL_) f.Configure(params_.frontLockHighHz, params_.sampleRate);
+  for (auto& f : rearVoiceLpR_) f.Configure(params_.frontLockHighHz, params_.sampleRate);
   centerHp_.Configure(params_.centerTrebleHz, params_.sampleRate);
   centerLp_.Configure(params_.centerLowpassHz, params_.sampleRate);
 
@@ -270,10 +270,10 @@ void OhlMusicUpmixer::Reset()
   rearHpR_.Reset();
   rearLpL_.Reset();
   rearLpR_.Reset();
-  rearVoiceLowL_.Reset();
-  rearVoiceLowR_.Reset();
-  rearVoiceHighL_.Reset();
-  rearVoiceHighR_.Reset();
+  for (auto& f : rearVoiceHpL_) f.Reset();
+  for (auto& f : rearVoiceHpR_) f.Reset();
+  for (auto& f : rearVoiceLpL_) f.Reset();
+  for (auto& f : rearVoiceLpR_) f.Reset();
   centerHp_.Reset();
   centerLp_.Reset();
   eventFast_.Reset();
@@ -351,6 +351,7 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const double balance = sum > kEps ? 2.0 * std::min(rmsL, rmsR) / sum : 1.0;
   const float centerConfidence =
       static_cast<float>(std::clamp((fullCorr - 0.35) / 0.65, 0.0, 1.0) * balance);
+  const bool blockNearlyMono = fullCorr > 0.9995 && balance > 0.995;
 
   // Keep this diagnostic for future meters, but v0.6 no longer relies on the classifier to
   // decide whether vocal body is removed. The actual carve is structural and sample-local below.
@@ -376,27 +377,30 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float directGain = 1.0f - params_.directReject * onset;
 
     // v0.6 rear topology:
-    //   1) remove the exact shared same-polarity component from L/R. This is a direct center carve,
-    //      not a statistical guess, so a mono/centered lead cannot survive merely because it was
-    //      widened elsewhere in the block.
-    //   2) keep the remaining L and R residuals independent so source asymmetry is preserved.
-    //   3) split each residual into low / vocal-body / air bands and directly attenuate only the
-    //      vocal/body band with Front Lock. This keeps high-frequency room/reverb available.
-    const float shared = SharedSamePolarity(l, r);
-    const float residualL = l - shared;
-    const float residualR = r - shared;
+    //   1) identify the vocal/body band with a steep 2-pole HP + 4-pole LP,
+    //   2) remove the shared same-polarity component only inside that band,
+    //   3) directly attenuate the remaining independent vocal-band residual with Front Lock,
+    //   4) leave low-frequency asymmetry and high-frequency room/air outside the lock band.
+    //
+    // A truly mono block is forced to zero rear source before these operations.
+    float voiceBandL = l;
+    float voiceBandR = r;
+    for (auto& f : rearVoiceHpL_) voiceBandL = f.Process(voiceBandL);
+    for (auto& f : rearVoiceHpR_) voiceBandR = f.Process(voiceBandR);
+    for (auto& f : rearVoiceLpL_) voiceBandL = f.Process(voiceBandL);
+    for (auto& f : rearVoiceLpR_) voiceBandR = f.Process(voiceBandR);
 
-    const float lowL = rearVoiceLowL_.Process(residualL);
-    const float lowR = rearVoiceLowR_.Process(residualR);
-    const float toVoiceHighL = rearVoiceHighL_.Process(residualL);
-    const float toVoiceHighR = rearVoiceHighR_.Process(residualR);
-    const float voiceL = toVoiceHighL - lowL;
-    const float voiceR = toVoiceHighR - lowR;
-    const float airL = residualL - toVoiceHighL;
-    const float airR = residualR - toVoiceHighR;
-    const float voiceGain = 1.0f - params_.frontLock;
-    const float shapedL = lowL + voiceGain * voiceL + airL;
-    const float shapedR = lowR + voiceGain * voiceR + airR;
+    const float sharedVoice = SharedSamePolarity(voiceBandL, voiceBandR);
+    const float residualVoiceL = voiceBandL - sharedVoice;
+    const float residualVoiceR = voiceBandR - sharedVoice;
+
+    float shapedL = l - sharedVoice - params_.frontLock * residualVoiceL;
+    float shapedR = r - sharedVoice - params_.frontLock * residualVoiceR;
+    if (blockNearlyMono)
+    {
+      shapedL = 0.0f;
+      shapedR = 0.0f;
+    }
 
     const float rearGain = (params_.widthFloor + surroundAmount_) * directGain;
     float rearL = rearLpL_.Process(rearHpL_.Process(shapedL * rearGain));
