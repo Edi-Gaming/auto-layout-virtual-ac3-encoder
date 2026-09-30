@@ -163,9 +163,9 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       op.ambienceHighWeight = static_cast<float>(params_.musicAmbienceHighWeight);
       op.ambienceAttackMs = static_cast<float>(params_.musicAmbienceAttackMs);
       op.ambienceReleaseMs = static_cast<float>(params_.musicAmbienceReleaseMs);
+      op.diffuseThreshold = static_cast<float>(params_.musicDiffuseThreshold);
       op.frontLock = static_cast<float>(params_.musicFrontLock);
-      op.frontLockLowHz = static_cast<float>(params_.musicFrontLockLowHz);
-      op.frontLockHighHz = static_cast<float>(params_.musicFrontLockHighHz);
+      op.rearBudget = static_cast<float>(params_.musicRearBudget);
       op.directReject = static_cast<float>(params_.musicDirectReject);
       op.directThreshold = static_cast<float>(params_.musicDirectThreshold);
       op.directRecoveryMs = static_cast<float>(params_.musicDirectRecoveryMs);
@@ -188,7 +188,8 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
 
       const auto& d = musicUpmixer_.DelaySamples();
       std::printf("[OhlMusic] enabled: adaptive %.2f, side-width %.2f, bands %.2f/%.2f/%.2f, "
-                  "ambience %.0f/%.0f ms, front-lock %.2f %.0f-%.0f Hz, direct %.2f @ %.2f (%.0f ms), "
+                  "ambience %.0f/%.0f ms diffuse-threshold %.2f, front-lock %.2f, "
+                  "rear-budget %.2f, direct %.2f @ %.2f (%.0f ms), "
                   "center %.2f %.0f-%.0f Hz, "
                   "rear %.0f-%.0f Hz trims %.2f/%.2f, "
                   "delay samples FL=%d FR=%d C=%d LFE=%d SL=%d SR=%d\n",
@@ -199,9 +200,9 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
                   params_.musicAmbienceHighWeight,
                   params_.musicAmbienceAttackMs,
                   params_.musicAmbienceReleaseMs,
+                  params_.musicDiffuseThreshold,
                   params_.musicFrontLock,
-                  params_.musicFrontLockLowHz,
-                  params_.musicFrontLockHighHz,
+                  params_.musicRearBudget,
                   params_.musicDirectReject,
                   params_.musicDirectThreshold,
                   params_.musicDirectRecoveryMs,
