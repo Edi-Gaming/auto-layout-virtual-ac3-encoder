@@ -367,8 +367,6 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   {
     const float l = stereo[2 * i];
     const float r = stereo[2 * i + 1];
-    const float midSample = 0.5f * (l + r);
-
     // Detect a local direct event from the full programme envelope. This is deliberately
     // independent of the ambience analyser: a clap can be stereo/side-heavy yet still be a direct
     // event we do not want to localize behind the listener.
@@ -378,8 +376,6 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float ratio = fast / (slow + 1.0e-5f);
     const float onset =
         std::clamp((ratio - params_.directThreshold) / 2.2f, 0.0f, 1.0f);
-    const float directGain = 1.0f - params_.directReject * onset;
-
     // v0.7 sparse rear source:
     //   1) remove same-polarity content shared by L/R sample-by-sample,
     //   2) keep only the leftover unique/asymmetric residual on each side,
@@ -462,5 +458,4 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
       out51[kChannels * i + static_cast<size_t>(ch)] =
           delays_[static_cast<size_t>(ch)].Process(raw[ch]);
   }
-}
 }
