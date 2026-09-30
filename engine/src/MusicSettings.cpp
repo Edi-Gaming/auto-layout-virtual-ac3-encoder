@@ -26,8 +26,8 @@ enum ControlId
   kAmbience,
   kWidth,
   kFrontLock,
-  kFrontLockLow,
-  kFrontLockHigh,
+  kDiffuseThreshold,
+  kRearBudget,
   kReject,
   kCenter,
 
@@ -90,8 +90,8 @@ struct SettingsState
   double ambienceReleaseMs = 520.0;
 
   double frontLock = 0.88;
-  double frontLockLowHz = 250.0;
-  double frontLockHighHz = 5200.0;
+  double diffuseThreshold = 0.18;
+  double rearBudget = 0.16;
   double directReject = 0.78;
   double directThreshold = 1.45;
   double directRecoveryMs = 18.0;
@@ -162,8 +162,8 @@ void LoadState(SettingsState& s)
   s.ambienceReleaseMs = ReadDouble(v, "music_ambience_release_ms", s.ambienceReleaseMs);
 
   s.frontLock = ReadDouble(v, "music_front_lock", s.frontLock);
-  s.frontLockLowHz = ReadDouble(v, "music_front_lock_low_hz", s.frontLockLowHz);
-  s.frontLockHighHz = ReadDouble(v, "music_front_lock_high_hz", s.frontLockHighHz);
+  s.diffuseThreshold = ReadDouble(v, "music_diffuse_threshold", s.diffuseThreshold);
+  s.rearBudget = ReadDouble(v, "music_rear_budget", s.rearBudget);
   s.directReject = ReadDouble(v, "music_direct_reject", s.directReject);
   s.directThreshold = ReadDouble(v, "music_direct_threshold", s.directThreshold);
   s.directRecoveryMs = ReadDouble(v, "music_direct_recovery_ms", s.directRecoveryMs);
@@ -357,8 +357,8 @@ void PushStateToControls(HWND hwnd, const SettingsState& s)
 
   SetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs, 0);
   SetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs, 0);
-  SetDoubleEdit(hwnd, kFrontLockLow, s.frontLockLowHz, 0);
-  SetDoubleEdit(hwnd, kFrontLockHigh, s.frontLockHighHz, 0);
+  SetDoubleEdit(hwnd, kDiffuseThreshold, s.diffuseThreshold, 2);
+  SetDoubleEdit(hwnd, kRearBudget, s.rearBudget, 2);
   SetDoubleEdit(hwnd, kDirectThreshold, s.directThreshold, 2);
   SetDoubleEdit(hwnd, kDirectRecovery, s.directRecoveryMs, 0);
 
@@ -387,10 +387,10 @@ void PullControlsToState(HWND hwnd, SettingsState& s)
       static_cast<double>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0)) / 100.0;
   s.frontLock =
       static_cast<double>(SendDlgItemMessageW(hwnd, kFrontLock, TBM_GETPOS, 0, 0)) / 100.0;
-  s.frontLockLowHz = std::clamp(GetDoubleEdit(hwnd, kFrontLockLow, s.frontLockLowHz), 20.0, 5000.0);
-  s.frontLockHighHz = std::clamp(GetDoubleEdit(hwnd, kFrontLockHigh, s.frontLockHighHz), 1000.0, 20000.0);
-  if (s.frontLockHighHz <= s.frontLockLowHz)
-    s.frontLockHighHz = (std::min)(20000.0, s.frontLockLowHz + 500.0);
+  s.diffuseThreshold =
+      std::clamp(GetDoubleEdit(hwnd, kDiffuseThreshold, s.diffuseThreshold), 0.0, 0.95);
+  s.rearBudget =
+      std::clamp(GetDoubleEdit(hwnd, kRearBudget, s.rearBudget), 0.02, 1.0);
   s.directReject =
       static_cast<double>(SendDlgItemMessageW(hwnd, kReject, TBM_GETPOS, 0, 0)) / 100.0;
   s.center =
@@ -440,9 +440,9 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 125;
       s.ambienceReleaseMs = 650;
       s.frontLock = 0.94;
-      s.frontLockLowHz = 250;
-      s.frontLockHighHz = 5200;
-      s.directReject = 0.88;
+      s.diffuseThreshold = 0.22;
+      s.rearBudget = 0.13;
+      s.directReject = 0.58;
       s.directThreshold = 1.35;
       s.directRecoveryMs = 14;
       s.center = 0.12;
@@ -462,10 +462,10 @@ void SetPreset(SettingsState& s, int preset)
       s.highWeight = 0.50;
       s.ambienceAttackMs = 90;
       s.ambienceReleaseMs = 520;
-      s.frontLock = 0.86;
-      s.frontLockLowHz = 250;
-      s.frontLockHighHz = 5200;
-      s.directReject = 0.82;
+      s.frontLock = 0.88;
+      s.diffuseThreshold = 0.15;
+      s.rearBudget = 0.18;
+      s.directReject = 0.55;
       s.directThreshold = 1.45;
       s.directRecoveryMs = 18;
       s.center = 0.15;
@@ -486,9 +486,9 @@ void SetPreset(SettingsState& s, int preset)
       s.ambienceAttackMs = 170;
       s.ambienceReleaseMs = 900;
       s.frontLock = 0.96;
-      s.frontLockLowHz = 250;
-      s.frontLockHighHz = 6000;
-      s.directReject = 0.94;
+      s.diffuseThreshold = 0.12;
+      s.rearBudget = 0.20;
+      s.directReject = 0.65;
       s.directThreshold = 1.22;
       s.directRecoveryMs = 11;
       s.center = 0.09;
@@ -509,10 +509,10 @@ void SetPreset(SettingsState& s, int preset)
       s.highWeight = 0.46;
       s.ambienceAttackMs = 100;
       s.ambienceReleaseMs = 520;
-      s.frontLock = 0.88;
-      s.frontLockLowHz = 250;
-      s.frontLockHighHz = 5200;
-      s.directReject = 0.78;
+      s.frontLock = 0.90;
+      s.diffuseThreshold = 0.18;
+      s.rearBudget = 0.16;
+      s.directReject = 0.60;
       s.directThreshold = 1.45;
       s.directRecoveryMs = 18;
       s.center = 0.18;
@@ -541,8 +541,8 @@ void Apply(HWND hwnd, SettingsState& state)
   values["music_ambience_attack_ms"] = Fmt(state.ambienceAttackMs, 0);
   values["music_ambience_release_ms"] = Fmt(state.ambienceReleaseMs, 0);
   values["music_front_lock"] = Fmt(state.frontLock);
-  values["music_front_lock_low_hz"] = Fmt(state.frontLockLowHz, 0);
-  values["music_front_lock_high_hz"] = Fmt(state.frontLockHighHz, 0);
+  values["music_diffuse_threshold"] = Fmt(state.diffuseThreshold);
+  values["music_rear_budget"] = Fmt(state.rearBudget);
   values["music_direct_reject"] = Fmt(state.directReject);
   values["music_direct_threshold"] = Fmt(state.directThreshold);
   values["music_direct_recovery_ms"] = Fmt(state.directRecoveryMs, 0);
@@ -604,7 +604,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.6 FIR vocal carve — voice/body stays front; room/air can stay behind.",
+      Label(hwnd, L"v0.7 sparse ambience — rears add space, never become another pair of mains.",
             21, 48, 710, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
@@ -654,11 +654,12 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Slider(hwnd, kFrontLock, 180, 397, 445, 100, PercentToSlider(state->frontLock));
       ValueLabel(hwnd, kFrontLockValue, 642, 404);
 
-      Label(hwnd, L"Lock band", 30, 445, 72, 22);
-      Edit(hwnd, kFrontLockLow, 104, 441, 72);
-      Label(hwnd, L"—", 181, 445, 15, 22);
-      Edit(hwnd, kFrontLockHigh, 199, 441, 78);
-      Label(hwnd, L"Hz  (rear vocal/body carve)", 284, 445, 210, 22, true);
+      Label(hwnd, L"Diffuse gate", 30, 445, 88, 22);
+      Edit(hwnd, kDiffuseThreshold, 120, 441, 72);
+      Label(hwnd, L"0 = always open; higher = only diffuse/room-like material", 201, 445, 360, 22, true);
+      Label(hwnd, L"Rear budget", 575, 445, 80, 22);
+      Edit(hwnd, kRearBudget, 656, 441, 58);
+      Label(hwnd, L"ratio", 716, 445, 35, 22, true);
 
       Label(hwnd, L"Direct-event reject", 30, 484, 150, 22);
       Slider(hwnd, kReject, 180, 477, 445, 100, PercentToSlider(state->directReject));
