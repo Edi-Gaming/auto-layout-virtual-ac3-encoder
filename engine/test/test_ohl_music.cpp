@@ -73,7 +73,7 @@ TEST_CASE("OHL Music default speaker distances produce Edi's measured alignment 
   CHECK(d[5] == 0);   // SR 33"
 }
 
-TEST_CASE("OHL Music preserves FL/FR exactly while keeping LFE silent")
+TEST_CASE("OHL Music preserves FL/FR exactly after its fixed FIR latency while keeping LFE silent")
 {
   constexpr size_t frames = 1536;
   const auto in = MakeSineStereo(frames, 440.0, false);
@@ -82,6 +82,8 @@ TEST_CASE("OHL Music preserves FL/FR exactly while keeping LFE silent")
   auto p = EqualDistanceParams();
   p.centerTrebleGain = 0.0f;
   REQUIRE(upmixer.Init(p));
+  const int latency = upmixer.ProcessingLatencySamples();
+  REQUIRE(latency == 32);
 
   std::vector<float> out(frames * 6, 0.0f);
   upmixer.ProcessStereo(in.data(), frames, out.data());
@@ -90,11 +92,19 @@ TEST_CASE("OHL Music preserves FL/FR exactly while keeping LFE silent")
   double maxLfe = 0.0;
   for (size_t i = 0; i < frames; ++i)
   {
-    maxFrontError = std::max(
-        maxFrontError, std::fabs(static_cast<double>(out[6 * i] - in[2 * i])));
-    maxFrontError = std::max(
-        maxFrontError, std::fabs(static_cast<double>(out[6 * i + 1] - in[2 * i + 1])));
     maxLfe = std::max(maxLfe, std::fabs(static_cast<double>(out[6 * i + 3])));
+    if (i < static_cast<size_t>(latency))
+    {
+      CHECK(std::fabs(out[6 * i]) < 1.0e-7f);
+      CHECK(std::fabs(out[6 * i + 1]) < 1.0e-7f);
+      continue;
+    }
+
+    const size_t src = i - static_cast<size_t>(latency);
+    maxFrontError = std::max(
+        maxFrontError, std::fabs(static_cast<double>(out[6 * i] - in[2 * src])));
+    maxFrontError = std::max(
+        maxFrontError, std::fabs(static_cast<double>(out[6 * i + 1] - in[2 * src + 1])));
   }
 
   CHECK(maxFrontError < 1.0e-7);
@@ -536,7 +546,7 @@ TEST_CASE("OHL Music v0.6 preserves rear asymmetry instead of mirroring side ene
   CHECK(right < left * 0.05);
 }
 
-TEST_CASE("OHL Music applies speaker-distance delay after spatial extraction")
+TEST_CASE("OHL Music preserves measured speaker alignment on top of FIR processing latency")
 {
   constexpr size_t frames = 128;
   std::vector<float> in(frames * 2, 0.0f);
@@ -546,16 +556,22 @@ TEST_CASE("OHL Music applies speaker-distance delay after spatial extraction")
   OhlMusicUpmixer upmixer;
   OhlMusicUpmixer::Params p;
   p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f; // anti-phase input then reconstructs the delayed raw rear signal exactly
   p.directReject = 0.0f;
   REQUIRE(upmixer.Init(p));
+  REQUIRE(upmixer.ProcessingLatencySamples() == 32);
   REQUIRE(upmixer.DelaySamples()[4] == 21);
   REQUIRE(upmixer.DelaySamples()[5] == 0);
 
   std::vector<float> out(frames * 6, 0.0f);
   upmixer.ProcessStereo(in.data(), frames, out.data());
 
-  CHECK(std::fabs(out[5]) > 0.02f);
-  for (int i = 0; i < 21; ++i)
+  const int base = upmixer.ProcessingLatencySamples();
+  for (int i = 0; i < base; ++i)
+    CHECK(std::fabs(out[6 * static_cast<size_t>(i) + 5]) < 1.0e-7f);
+  CHECK(std::fabs(out[6 * static_cast<size_t>(base) + 5]) > 0.02f);
+
+  for (int i = 0; i < base + 21; ++i)
     CHECK(std::fabs(out[6 * static_cast<size_t>(i) + 4]) < 1.0e-7f);
-  CHECK(std::fabs(out[6 * 21 + 4]) > 0.02f);
+  CHECK(std::fabs(out[6 * static_cast<size_t>(base + 21) + 4]) > 0.02f);
 }
