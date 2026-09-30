@@ -178,7 +178,7 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
 if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
   Add-Content -Path $configDst -Encoding UTF8 -Value @(
     ''
-    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.6'
+    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.7'
     'stereo_processing=receiver'
     'music_surround_gain=0.70'
     'music_width_floor=0.16'
@@ -187,9 +187,9 @@ if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
     'music_ambience_high_weight=0.46'
     'music_ambience_attack_ms=100'
     'music_ambience_release_ms=520'
+    'music_diffuse_threshold=0.18'
     'music_front_lock=0.88'
-    'music_front_lock_low_hz=250'
-    'music_front_lock_high_hz=5200'
+    'music_rear_budget=0.16'
     'music_direct_reject=0.78'
     'music_direct_threshold=1.45'
     'music_direct_recovery_ms=18'
@@ -220,9 +220,9 @@ $musicUpgradeDefaults = @(
   @('music_ambience_high_weight', '0.46'),
   @('music_ambience_attack_ms', '100'),
   @('music_ambience_release_ms', '520'),
+  @('music_diffuse_threshold', '0.18'),
   @('music_front_lock', '0.88'),
-  @('music_front_lock_low_hz', '250'),
-  @('music_front_lock_high_hz', '5200'),
+  @('music_rear_budget', '0.16'),
   @('music_direct_reject', '0.78'),
   @('music_direct_threshold', '1.45'),
   @('music_direct_recovery_ms', '18'),
