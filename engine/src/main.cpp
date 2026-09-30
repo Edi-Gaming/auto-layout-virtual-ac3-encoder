@@ -69,8 +69,9 @@ static std::string Trim(const std::string& s)
 // Load a key=value config file (# or ; comments). CLI args override these.
 // Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
 //       layout, auto_threshold_db, auto_hold_ms, tray, stereo_processing,
-//       music_surround_gain, music_width_floor, music_ambience_*, music_front_lock,
- //       music_direct_*, music_center_*, music_rear_*, music_distance_*_in.
+//       music_surround_gain, music_width_floor, music_ambience_*, music_diffuse_threshold,
+ //       music_front_lock, music_rear_budget, music_direct_*, music_center_*, music_rear_*,
+ //       music_distance_*_in.
 static void LoadConfigFile(const std::string& path, Config& c)
 {
   std::ifstream f(path);
@@ -105,9 +106,9 @@ static void LoadConfigFile(const std::string& path, Config& c)
     else if (k == "music_ambience_high_weight") c.musicAmbienceHighWeight = std::strtod(v.c_str(), nullptr);
     else if (k == "music_ambience_attack_ms") c.musicAmbienceAttackMs = std::strtod(v.c_str(), nullptr);
     else if (k == "music_ambience_release_ms") c.musicAmbienceReleaseMs = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_diffuse_threshold") c.musicDiffuseThreshold = std::strtod(v.c_str(), nullptr);
     else if (k == "music_front_lock") c.musicFrontLock = std::strtod(v.c_str(), nullptr);
-    else if (k == "music_front_lock_low_hz") c.musicFrontLockLowHz = std::strtod(v.c_str(), nullptr);
-    else if (k == "music_front_lock_high_hz") c.musicFrontLockHighHz = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_rear_budget") c.musicRearBudget = std::strtod(v.c_str(), nullptr);
     else if (k == "music_direct_reject") c.musicDirectReject = std::strtod(v.c_str(), nullptr);
     else if (k == "music_direct_threshold") c.musicDirectThreshold = std::strtod(v.c_str(), nullptr);
     else if (k == "music_direct_recovery_ms") c.musicDirectRecoveryMs = std::strtod(v.c_str(), nullptr);
@@ -182,10 +183,10 @@ static void ParseArgs(int argc, char** argv, Config& c)
       c.musicAmbienceReleaseMs = std::strtod(argv[++i], nullptr);
     else if (a == "--music-front-lock" && i + 1 < argc)
       c.musicFrontLock = std::strtod(argv[++i], nullptr);
-    else if (a == "--music-front-lock-low-hz" && i + 1 < argc)
-      c.musicFrontLockLowHz = std::strtod(argv[++i], nullptr);
-    else if (a == "--music-front-lock-high-hz" && i + 1 < argc)
-      c.musicFrontLockHighHz = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-diffuse-threshold" && i + 1 < argc)
+      c.musicDiffuseThreshold = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-rear-budget" && i + 1 < argc)
+      c.musicRearBudget = std::strtod(argv[++i], nullptr);
     else if (a == "--music-direct-reject" && i + 1 < argc)
       c.musicDirectReject = std::strtod(argv[++i], nullptr);
     else if (a == "--music-direct-threshold" && i + 1 < argc)
@@ -220,10 +221,9 @@ static bool ValidateConfig(const Config& cfg)
       cfg.musicAmbienceHighWeight < 0.0 || cfg.musicAmbienceHighWeight > 4.0 ||
       cfg.musicAmbienceAttackMs < 5.0 || cfg.musicAmbienceAttackMs > 5000.0 ||
       cfg.musicAmbienceReleaseMs < 10.0 || cfg.musicAmbienceReleaseMs > 10000.0 ||
+      cfg.musicDiffuseThreshold < 0.0 || cfg.musicDiffuseThreshold >= 1.0 ||
       cfg.musicFrontLock < 0.0 || cfg.musicFrontLock > 1.0 ||
-      cfg.musicFrontLockLowHz < 20.0 || cfg.musicFrontLockLowHz > 5000.0 ||
-      cfg.musicFrontLockHighHz < 1000.0 || cfg.musicFrontLockHighHz > 20000.0 ||
-      cfg.musicFrontLockHighHz <= cfg.musicFrontLockLowHz ||
+      cfg.musicRearBudget <= 0.0 || cfg.musicRearBudget > 1.0 ||
       cfg.musicDirectReject < 0.0 || cfg.musicDirectReject > 1.0 ||
       cfg.musicDirectThreshold <= 1.0 || cfg.musicDirectThreshold > 8.0 ||
       cfg.musicDirectRecoveryMs < 1.0 || cfg.musicDirectRecoveryMs > 500.0 ||
@@ -405,9 +405,9 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   pp.musicAmbienceHighWeight = cfg.musicAmbienceHighWeight;
   pp.musicAmbienceAttackMs = cfg.musicAmbienceAttackMs;
   pp.musicAmbienceReleaseMs = cfg.musicAmbienceReleaseMs;
+  pp.musicDiffuseThreshold = cfg.musicDiffuseThreshold;
   pp.musicFrontLock = cfg.musicFrontLock;
-  pp.musicFrontLockLowHz = cfg.musicFrontLockLowHz;
-  pp.musicFrontLockHighHz = cfg.musicFrontLockHighHz;
+  pp.musicRearBudget = cfg.musicRearBudget;
   pp.musicDirectReject = cfg.musicDirectReject;
   pp.musicDirectThreshold = cfg.musicDirectThreshold;
   pp.musicDirectRecoveryMs = cfg.musicDirectRecoveryMs;
@@ -430,10 +430,11 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   {
     if (pp.musicStereo)
       std::printf("Stereo  : OHL Music 5.1 (adaptive %.2f, side-width %.2f, "
-                  "bands %.2f/%.2f/%.2f, front-lock %.2f %.0f-%.0f Hz, direct %.2f, center %.2f)\n",
+                  "bands %.2f/%.2f/%.2f, diffuse-threshold %.2f, front-lock %.2f, "
+                  "rear-budget %.2f, direct %.2f, center %.2f)\n",
                   pp.musicSurroundGain, pp.musicWidthFloor,
                   pp.musicAmbienceLowWeight, pp.musicAmbienceMidWeight, pp.musicAmbienceHighWeight,
-                  pp.musicFrontLock, pp.musicFrontLockLowHz, pp.musicFrontLockHighHz,
+                  pp.musicDiffuseThreshold, pp.musicFrontLock, pp.musicRearBudget,
                   pp.musicDirectReject, pp.musicCenterTrebleGain);
     else
       std::printf("Stereo  : receiver processing via genuine AC3 2.0\n");
