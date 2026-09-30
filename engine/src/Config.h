@@ -54,10 +54,10 @@ struct Config
   double musicAmbienceHighWeight = 0.46;
   double musicAmbienceAttackMs = 100.0;
   double musicAmbienceReleaseMs = 520.0;
-  double musicDiffuseThreshold = 0.18;
+  double musicDiffuseThreshold = 0.10;
 
   double musicFrontLock = 0.88;
-  double musicRearBudget = 0.16;
+  double musicRearBudget = 0.22;
 
   double musicDirectReject = 0.78;
   double musicDirectThreshold = 1.45;
