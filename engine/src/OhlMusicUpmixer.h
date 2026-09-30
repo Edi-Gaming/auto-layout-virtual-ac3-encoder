@@ -106,6 +106,18 @@ private:
     float value = 0.0f;
   };
 
+  struct FirBandpass
+  {
+    bool Configure(float lowHz, float highHz, int sampleRate, int taps);
+    void Reset();
+    float Process(float x);
+
+    std::vector<float> coeff;
+    std::vector<float> history;
+    size_t pos = 0;
+    int groupDelay = 0;
+  };
+
   Params params_{};
   std::array<int, kChannels> delaySamples_{{0, 0, 0, 0, 0, 0}};
   std::array<DelayLine, kChannels> delays_;
@@ -119,10 +131,11 @@ private:
   OnePoleHighpass rearHpR_;
   OnePoleLowpass rearLpL_;
   OnePoleLowpass rearLpR_;
-  std::array<OnePoleLowpass, 4> rearVoiceLowSplitL_;
-  std::array<OnePoleLowpass, 4> rearVoiceLowSplitR_;
-  std::array<OnePoleLowpass, 4> rearVoiceHighSplitL_;
-  std::array<OnePoleLowpass, 4> rearVoiceHighSplitR_;
+  FirBandpass rearVoiceBandL_;
+  FirBandpass rearVoiceBandR_;
+  DelayLine rearVoiceAlignL_;
+  DelayLine rearVoiceAlignR_;
+  int rearVoiceFirDelay_ = 0;
   OnePoleHighpass centerHp_;
   OnePoleLowpass centerLp_;
 
