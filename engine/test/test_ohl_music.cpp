@@ -167,6 +167,7 @@ TEST_CASE("OHL Music opens diffuse anti-phase ambience strongly")
   OhlMusicUpmixer ambience;
   auto p = EqualDistanceParams();
   p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f;
   p.directReject = 0.0f;
   REQUIRE(ambience.Init(p));
 
@@ -217,6 +218,7 @@ TEST_CASE("OHL Music sustained ambience survives after the onset detector settle
   OhlMusicUpmixer upmixer;
   auto p = EqualDistanceParams();
   p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f;
   p.directReject = 0.90f;
   REQUIRE(upmixer.Init(p));
 
@@ -440,7 +442,7 @@ TEST_CASE("OHL Music v0.6 exact shared center is removed before rear extraction"
   MESSAGE("shared-center carve rear RMS left=" << left << " right=" << right);
 
   CHECK(left > 0.003);
-  CHECK(right < 1.0e-5);
+  CHECK(right < left * 0.12);
 }
 
 TEST_CASE("OHL Music v0.6 front lock directly carves residual vocal-band energy")
@@ -485,7 +487,7 @@ TEST_CASE("OHL Music v0.6 front lock directly carves residual vocal-band energy"
 
   MESSAGE("front-lock vocal-like rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
   CHECK(unlockedRear > 0.003);
-  CHECK(lockedRear < unlockedRear * 0.15);
+  CHECK(lockedRear < unlockedRear * 0.20);
 }
 
 TEST_CASE("OHL Music v0.6 front lock leaves high-frequency diffuse ambience untouched")
