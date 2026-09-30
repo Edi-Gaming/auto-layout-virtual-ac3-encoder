@@ -182,89 +182,6 @@ float OhlMusicUpmixer::EnvelopeFollower::Process(float x)
   return value;
 }
 
-bool OhlMusicUpmixer::FirBandpass::Configure(float lowHz, float highHz, int sampleRate, int taps)
-{
-  if (sampleRate <= 0 || lowHz <= 0.0f || highHz <= lowHz ||
-      highHz >= 0.5f * static_cast<float>(sampleRate) || taps < 3)
-    return false;
-
-  if ((taps & 1) == 0)
-    ++taps;
-
-  coeff.assign(static_cast<size_t>(taps), 0.0f);
-  history.assign(static_cast<size_t>(taps), 0.0f);
-  pos = 0;
-  groupDelay = (taps - 1) / 2;
-
-  const double fl = static_cast<double>(lowHz) / static_cast<double>(sampleRate);
-  const double fh = static_cast<double>(highHz) / static_cast<double>(sampleRate);
-  const int m0 = groupDelay;
-
-  for (int n = 0; n < taps; ++n)
-  {
-    const int m = n - m0;
-    double ideal = 0.0;
-    if (m == 0)
-      ideal = 2.0 * (fh - fl);
-    else
-      ideal = (std::sin(2.0 * kPi * fh * static_cast<double>(m)) -
-               std::sin(2.0 * kPi * fl * static_cast<double>(m))) /
-              (kPi * static_cast<double>(m));
-
-    const double window =
-        0.54 - 0.46 * std::cos(2.0 * kPi * static_cast<double>(n) /
-                               static_cast<double>(taps - 1));
-    coeff[static_cast<size_t>(n)] = static_cast<float>(ideal * window);
-  }
-
-  // Normalize pass-band magnitude at the geometric center frequency.
-  const double fc = std::sqrt(static_cast<double>(lowHz) * static_cast<double>(highHz));
-  const double w = 2.0 * kPi * fc / static_cast<double>(sampleRate);
-  double re = 0.0;
-  double im = 0.0;
-  for (int n = 0; n < taps; ++n)
-  {
-    const double phase = -w * static_cast<double>(n);
-    const double v = coeff[static_cast<size_t>(n)];
-    re += v * std::cos(phase);
-    im += v * std::sin(phase);
-  }
-  const double mag = std::sqrt(re * re + im * im);
-  if (mag <= 1.0e-9)
-    return false;
-
-  const float scale = static_cast<float>(1.0 / mag);
-  for (float& v : coeff)
-    v *= scale;
-
-  return true;
-}
-
-void OhlMusicUpmixer::FirBandpass::Reset()
-{
-  std::fill(history.begin(), history.end(), 0.0f);
-  pos = 0;
-}
-
-float OhlMusicUpmixer::FirBandpass::Process(float x)
-{
-  if (coeff.empty())
-    return 0.0f;
-
-  history[pos] = x;
-
-  double y = 0.0;
-  size_t idx = pos;
-  for (size_t k = 0; k < coeff.size(); ++k)
-  {
-    y += static_cast<double>(coeff[k]) * static_cast<double>(history[idx]);
-    idx = idx == 0 ? history.size() - 1 : idx - 1;
-  }
-
-  pos = (pos + 1) % history.size();
-  return static_cast<float>(y);
-}
-
 bool OhlMusicUpmixer::Init(const Params& params)
 {
   if (params.sampleRate <= 0 ||
@@ -275,11 +192,11 @@ bool OhlMusicUpmixer::Init(const Params& params)
       !std::isfinite(params.ambienceHighWeight) || params.ambienceHighWeight < 0.0f ||
       !std::isfinite(params.ambienceAttackMs) || params.ambienceAttackMs <= 0.0f ||
       !std::isfinite(params.ambienceReleaseMs) || params.ambienceReleaseMs <= 0.0f ||
+      !std::isfinite(params.diffuseThreshold) || params.diffuseThreshold < 0.0f ||
+      params.diffuseThreshold >= 1.0f ||
       !std::isfinite(params.frontLock) || params.frontLock < 0.0f || params.frontLock > 1.0f ||
-      !std::isfinite(params.frontLockLowHz) || params.frontLockLowHz < 20.0f ||
-      !std::isfinite(params.frontLockHighHz) ||
-      params.frontLockHighHz <= params.frontLockLowHz ||
-      params.frontLockHighHz > 20000.0f ||
+      !std::isfinite(params.rearBudget) || params.rearBudget <= 0.0f ||
+      params.rearBudget > 1.0f ||
       !std::isfinite(params.directReject) || params.directReject < 0.0f ||
       params.directReject > 1.0f ||
       !std::isfinite(params.directThreshold) || params.directThreshold <= 1.0f ||
@@ -294,15 +211,6 @@ bool OhlMusicUpmixer::Init(const Params& params)
     return false;
 
   params_ = params;
-
-  if (!rearVoiceBandL_.Configure(params_.frontLockLowHz, params_.frontLockHighHz,
-                                 params_.sampleRate, 65) ||
-      !rearVoiceBandR_.Configure(params_.frontLockLowHz, params_.frontLockHighHz,
-                                 params_.sampleRate, 65))
-    return false;
-  rearVoiceFirDelay_ = rearVoiceBandL_.groupDelay;
-  rearVoiceAlignL_.Configure(rearVoiceFirDelay_);
-  rearVoiceAlignR_.Configure(rearVoiceFirDelay_);
 
   float farthest = 0.0f;
   for (float d : params_.distanceInches)
@@ -320,9 +228,7 @@ bool OhlMusicUpmixer::Init(const Params& params)
     const double delaySeconds = extraDistanceMetres / kSpeedOfSoundMetresPerSecond;
     delaySamples_[static_cast<size_t>(ch)] =
         static_cast<int>(std::lround(delaySeconds * static_cast<double>(params_.sampleRate)));
-    const int firComp = ch < 4 ? rearVoiceFirDelay_ : 0;
-    delays_[static_cast<size_t>(ch)].Configure(
-        delaySamples_[static_cast<size_t>(ch)] + firComp);
+    delays_[static_cast<size_t>(ch)].Configure(delaySamples_[static_cast<size_t>(ch)]);
   }
 
   // Three broad analysis bands: <300 Hz, ~300-3000 Hz, >3000 Hz.
@@ -360,10 +266,6 @@ void OhlMusicUpmixer::Reset()
   rearHpR_.Reset();
   rearLpL_.Reset();
   rearLpR_.Reset();
-  rearVoiceBandL_.Reset();
-  rearVoiceBandR_.Reset();
-  rearVoiceAlignL_.Reset();
-  rearVoiceAlignR_.Reset();
   centerHp_.Reset();
   centerLp_.Reset();
   eventFast_.Reset();
@@ -416,7 +318,12 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
       static_cast<double>(params_.ambienceHighWeight) * AmbienceScore(high),
       0.0, 1.0);
 
-  float target = static_cast<float>(params_.surroundGain * ambience);
+  const double gateNorm = std::clamp(
+      (ambience - static_cast<double>(params_.diffuseThreshold)) /
+          (1.0 - static_cast<double>(params_.diffuseThreshold)),
+      0.0, 1.0);
+  const double sparseDiffuse = gateNorm * gateNorm;
+  float target = static_cast<float>(params_.surroundGain * sparseDiffuse);
   target = std::clamp(target, 0.0f, params_.surroundGain);
 
   if (!gainInitialized_)
@@ -443,11 +350,18 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
       static_cast<float>(std::clamp((fullCorr - 0.35) / 0.65, 0.0, 1.0) * balance);
   const bool blockNearlyMono = fullCorr > 0.9995 && balance > 0.995;
 
-  // Keep this diagnostic for future meters, but v0.6 no longer relies on the classifier to
-  // decide whether vocal body is removed. The actual carve is structural and sample-local below.
+  // Front Lock is now secondary protection. Shared content is removed structurally below;
+  // this confidence only suppresses the leftover widened/doubled residual while a coherent
+  // center dominates the programme.
   const double frontLockConfidence = std::clamp(
-      0.20 * CenterConfidence(full) + 0.80 * CenterConfidence(mid), 0.0, 1.0);
+      0.15 * CenterConfidence(full) + 0.85 * CenterConfidence(mid), 0.0, 1.0);
   lastFrontLockConfidence_ = static_cast<float>(frontLockConfidence);
+  const float frontLockGain = static_cast<float>(
+      1.0 - static_cast<double>(params_.frontLock) * frontLockConfidence);
+
+  rearScratchL_.assign(frames, 0.0f);
+  rearScratchR_.assign(frames, 0.0f);
+  double rearEnergy = 0.0;
 
   for (size_t i = 0; i < frames; ++i)
   {
@@ -466,45 +380,74 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
         std::clamp((ratio - params_.directThreshold) / 2.2f, 0.0f, 1.0f);
     const float directGain = 1.0f - params_.directReject * onset;
 
-    // v0.6 rear topology:
-    //   1) delay raw L/R by the FIR group delay,
-    //   2) extract a linear-phase vocal/body band from each channel,
-    //   3) remove the shared same-polarity vocal component,
-    //   4) scale only the remaining vocal-band residual with Front Lock,
-    //   5) recombine with the phase-aligned outside-band signal.
+    // v0.7 sparse rear source:
+    //   1) remove same-polarity content shared by L/R sample-by-sample,
+    //   2) keep only the leftover unique/asymmetric residual on each side,
+    //   3) strongly suppress that residual while the programme is center/coherent,
+    //   4) open adaptive level only when packet-level analysis says the stereo field is diffuse.
     //
-    // Because raw and FIR-band signals have matched delay, subtraction is real cancellation
-    // rather than the phasey pseudo-notch produced by the earlier IIR experiments.
-    const float alignedL = rearVoiceAlignL_.Process(l);
-    const float alignedR = rearVoiceAlignR_.Process(r);
-    const float voiceBandL = rearVoiceBandL_.Process(l);
-    const float voiceBandR = rearVoiceBandR_.Process(r);
+    // Critically, raw L or R is never used as the surround source.
+    const float shared = SharedSamePolarity(l, r);
+    float residualL = l - shared;
+    float residualR = r - shared;
 
-    const float outsideBandL = alignedL - voiceBandL;
-    const float outsideBandR = alignedR - voiceBandR;
-
-    const float sharedVoice = SharedSamePolarity(voiceBandL, voiceBandR);
-    const float residualVoiceL = voiceBandL - sharedVoice;
-    const float residualVoiceR = voiceBandR - sharedVoice;
-    const float voiceGain = 1.0f - params_.frontLock;
-
-    float shapedL = outsideBandL + voiceGain * residualVoiceL;
-    float shapedR = outsideBandR + voiceGain * residualVoiceR;
     if (blockNearlyMono)
     {
-      shapedL = 0.0f;
-      shapedR = 0.0f;
+      residualL = 0.0f;
+      residualR = 0.0f;
     }
 
-    const float rearGain = (params_.widthFloor + surroundAmount_) * directGain;
-    float rearL = rearLpL_.Process(rearHpL_.Process(shapedL * rearGain));
-    float rearR = rearLpR_.Process(rearHpR_.Process(shapedR * rearGain));
+    // Width floor is intentionally only one quarter strength when the diffuse gate is closed.
+    // That preserves a subtle stage-widening trace without turning hard-panned instruments into
+    // rear-channel copies.
+    const float diffuseOpen = static_cast<float>(sparseDiffuse);
+    const float baseWidth =
+        params_.widthFloor * (0.25f + 0.75f * diffuseOpen);
+
+    // Direct-event protection now ducks rather than mutes. Even at 100% UI setting, the onset
+    // detector can remove at most 55% so snare/clap hits do not punch holes in the surround bed.
+    const float effectiveReject = 0.55f * params_.directReject;
+    const float softenedDirectGain = 1.0f - effectiveReject * onset;
+
+    const float rearGain =
+        (baseWidth + surroundAmount_) * softenedDirectGain * frontLockGain;
+
+    float rearL = rearLpL_.Process(rearHpL_.Process(residualL * rearGain));
+    float rearR = rearLpR_.Process(rearHpR_.Process(residualR * rearGain));
     rearL *= params_.rearLeftTrim;
     rearR *= params_.rearRightTrim;
+
+    rearScratchL_[i] = rearL;
+    rearScratchR_[i] = rearR;
+    rearEnergy += static_cast<double>(rearL) * rearL +
+                  static_cast<double>(rearR) * rearR;
+  }
+
+  // Hard rear-energy budget. The average RMS of the rear pair may never exceed rearBudget times
+  // the average RMS of the original front pair, regardless of what the detector or tuning asks.
+  const double frontRms = std::sqrt(
+      (full.eL + full.eR) / (2.0 * static_cast<double>(frames) + kEps));
+  const double rearRms = std::sqrt(
+      rearEnergy / (2.0 * static_cast<double>(frames) + kEps));
+  float budgetScale = 1.0f;
+  if (rearRms > kEps && frontRms > kEps)
+  {
+    const double allowed = static_cast<double>(params_.rearBudget) * frontRms;
+    budgetScale = static_cast<float>(std::min(1.0, allowed / rearRms));
+  }
+
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const float l = stereo[2 * i];
+    const float r = stereo[2 * i + 1];
+    const float midSample = 0.5f * (l + r);
 
     const float centerBand = centerLp_.Process(centerHp_.Process(midSample));
     const float center =
         params_.centerTrebleGain * centerConfidence * centerBand;
+
+    const float rearL = rearScratchL_[i] * budgetScale;
+    const float rearR = rearScratchR_[i] * budgetScale;
 
     const float raw[kChannels] = {
         l,
@@ -519,4 +462,5 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
       out51[kChannels * i + static_cast<size_t>(ch)] =
           delays_[static_cast<size_t>(ch)].Process(raw[ch]);
   }
+}
 }
