@@ -119,10 +119,10 @@ private:
   OnePoleHighpass rearHpR_;
   OnePoleLowpass rearLpL_;
   OnePoleLowpass rearLpR_;
-  std::array<OnePoleHighpass, 2> rearVoiceHpL_;
-  std::array<OnePoleHighpass, 2> rearVoiceHpR_;
-  std::array<OnePoleLowpass, 4> rearVoiceLpL_;
-  std::array<OnePoleLowpass, 4> rearVoiceLpR_;
+  std::array<OnePoleLowpass, 4> rearVoiceLowSplitL_;
+  std::array<OnePoleLowpass, 4> rearVoiceLowSplitR_;
+  std::array<OnePoleLowpass, 4> rearVoiceHighSplitL_;
+  std::array<OnePoleLowpass, 4> rearVoiceHighSplitR_;
   OnePoleHighpass centerHp_;
   OnePoleLowpass centerLp_;
 
