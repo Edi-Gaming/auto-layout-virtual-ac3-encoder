@@ -1,10 +1,10 @@
 // OhlMusicUpmixer.h — stereo -> discrete 5.1 OHL Music spatializer.
 //
-// v0.5 keeps v0.4's tunable ambience analysis but changes rear spatial topology:
-//  * centered/coherent midband material gets an explicit Front Lock so vocal body stays forward,
-//  * SL/SR are independent L/R residuals after coherent-center subtraction rather than a mirrored
-//    +/- side pair, so the rear field follows actual stereo asymmetry instead of sounding like a
-//    symmetric hall return.
+// v0.6 makes vocal anchoring structural instead of classifier-dependent:
+//  * exact shared same-polarity L/R content is removed from the rear source,
+//  * the remaining independent L/R residuals are split into low / vocal-body / air bands,
+//  * Front Lock directly attenuates the vocal-body band while leaving high-frequency ambience and
+//    asymmetric effects available behind the listener.
 //
 // Output channel order matches Windows/AC3 5.1-back: FL FR FC LFE BL BR.
 #pragma once
@@ -31,9 +31,11 @@ public:
     float ambienceAttackMs = 100.0f;
     float ambienceReleaseMs = 520.0f;
 
-    // 0..1 attenuation strength for coherent/centered midrange material in the rear field.
-    // 0 = v0.4 behavior, 1 = aggressively keep centered vocal/instrument body in front.
+    // 0..1 attenuation of the residual vocal/body band in the rears after exact common-content
+    // subtraction. 0 = full residual midband; 1 = remove that band from the rear field.
     float frontLock = 0.88f;
+    float frontLockLowHz = 250.0f;
+    float frontLockHighHz = 5200.0f;
 
     float directReject = 0.78f;
     float directThreshold = 1.45f;
@@ -117,6 +119,10 @@ private:
   OnePoleHighpass rearHpR_;
   OnePoleLowpass rearLpL_;
   OnePoleLowpass rearLpR_;
+  OnePoleLowpass rearVoiceLowL_;
+  OnePoleLowpass rearVoiceLowR_;
+  OnePoleLowpass rearVoiceHighL_;
+  OnePoleLowpass rearVoiceHighR_;
   OnePoleHighpass centerHp_;
   OnePoleLowpass centerLp_;
 
