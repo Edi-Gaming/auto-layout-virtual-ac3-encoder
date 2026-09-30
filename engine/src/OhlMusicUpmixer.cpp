@@ -415,7 +415,7 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     // surroundAmount_ already contains the diffuse-open law. Multiplying by 'open' again here
     // was effectively a second gate and made ordinary stereo mixes nearly silent in the rears.
     const float spreadGain =
-        0.55f * surroundAmount_ * packetBalance;
+        0.75f * surroundAmount_ * packetBalance;
     const float spreadL = side * spreadGain;
     const float spreadR = -side * spreadGain;
 
