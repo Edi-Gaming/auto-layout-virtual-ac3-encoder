@@ -396,7 +396,44 @@ TEST_CASE("OHL Music center low-pass bounds the sparkle band")
 }
 
 
-TEST_CASE("OHL Music v0.5 front lock suppresses correlated vocal-like stereo residue")
+
+TEST_CASE("OHL Music v0.6 exact shared center is removed before rear extraction")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float sharedVoice =
+        0.30f * static_cast<float>(std::sin(2.0 * kPi * 1100.0 * tt));
+    // Same centered voice, but the left side carries extra production texture.
+    const float leftTexture =
+        0.035f * static_cast<float>(std::sin(2.0 * kPi * 7800.0 * tt));
+    in[2 * i] = sharedVoice + leftTexture;
+    in[2 * i + 1] = sharedVoice;
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 0.0f;
+  p.widthFloor = 0.30f;
+  p.frontLock = 1.0f;
+  p.directReject = 0.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double left = ChannelRms(out, 4, 512);
+  const double right = ChannelRms(out, 5, 512);
+  MESSAGE("shared-center carve rear RMS left=" << left << " right=" << right);
+
+  CHECK(left > 0.003);
+  CHECK(right < 1.0e-5);
+}
+
+TEST_CASE("OHL Music v0.6 front lock directly carves residual vocal-band energy")
 {
   constexpr size_t frames = 4096;
   std::vector<float> in(frames * 2);
@@ -438,13 +475,13 @@ TEST_CASE("OHL Music v0.5 front lock suppresses correlated vocal-like stereo res
 
   MESSAGE("front-lock vocal-like rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
   CHECK(unlockedRear > 0.003);
-  CHECK(lockedRear < unlockedRear * 0.35);
+  CHECK(lockedRear < unlockedRear * 0.15);
 }
 
-TEST_CASE("OHL Music v0.5 front lock leaves decorrelated ambience essentially untouched")
+TEST_CASE("OHL Music v0.6 front lock leaves high-frequency diffuse ambience untouched")
 {
   constexpr size_t frames = 4096;
-  const auto in = MakeSineStereo(frames, 5200.0, true);
+  const auto in = MakeSineStereo(frames, 9000.0, true);
 
   auto p = EqualDistanceParams();
   p.centerTrebleGain = 0.0f;
@@ -474,10 +511,10 @@ TEST_CASE("OHL Music v0.5 front lock leaves decorrelated ambience essentially un
   CHECK(std::fabs(lockedRear - unlockedRear) < unlockedRear * 0.03);
 }
 
-TEST_CASE("OHL Music v0.5 preserves rear asymmetry instead of mirroring side energy")
+TEST_CASE("OHL Music v0.6 preserves rear asymmetry instead of mirroring side energy")
 {
   constexpr size_t frames = 4096;
-  const auto in = MakeSineStereo(frames, 2600.0, false, false);
+  const auto in = MakeSineStereo(frames, 8000.0, false, false);
 
   OhlMusicUpmixer upmixer;
   auto p = EqualDistanceParams();
