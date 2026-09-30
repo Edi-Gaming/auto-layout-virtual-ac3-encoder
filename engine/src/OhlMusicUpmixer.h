@@ -1,10 +1,9 @@
 // OhlMusicUpmixer.h — stereo -> discrete 5.1 OHL Music spatializer.
 //
-// v0.6 makes vocal anchoring structural instead of classifier-dependent:
-//  * exact shared same-polarity L/R content is removed from the rear source,
-//  * the remaining independent L/R residuals are split into low / vocal-body / air bands,
-//  * Front Lock directly attenuates the vocal-body band while leaving high-frequency ambience and
-//    asymmetric effects available behind the listener.
+// v0.7 is a sparse ambience extractor, not a second pair of mains:
+//  * rear source starts at zero and receives only unshared L/R residual information,
+//  * a diffuse-content gate opens adaptive ambience while direct/panned program stays mostly front,
+//  * a hard rear-energy budget prevents the surround pair from becoming a duplicate stereo pair.
 //
 // Output channel order matches Windows/AC3 5.1-back: FL FR FC LFE BL BR.
 #pragma once
@@ -30,12 +29,15 @@ public:
     float ambienceHighWeight = 0.46f;
     float ambienceAttackMs = 100.0f;
     float ambienceReleaseMs = 520.0f;
+    float diffuseThreshold = 0.18f;
 
-    // 0..1 attenuation of the residual vocal/body band in the rears after exact common-content
-    // subtraction. 0 = full residual midband; 1 = remove that band from the rear field.
+    // 0..1 attenuation strength applied to unshared residuals when the packet is strongly
+    // center/coherent. Shared content itself is always removed structurally.
     float frontLock = 0.88f;
-    float frontLockLowHz = 250.0f;
-    float frontLockHighHz = 5200.0f;
+
+    // Maximum average rear-channel RMS as a fraction of average front-channel RMS.
+    // This is the final safety rail against "rear mains".
+    float rearBudget = 0.16f;
 
     float directReject = 0.78f;
     float directThreshold = 1.45f;
@@ -61,7 +63,7 @@ public:
   float LastCorrelation() const { return lastCorrelation_; }
   float LastSurroundAmount() const { return surroundAmount_; }
   float LastFrontLockConfidence() const { return lastFrontLockConfidence_; }
-  int ProcessingLatencySamples() const { return rearVoiceFirDelay_; }
+  int ProcessingLatencySamples() const { return 0; }
   const std::array<int, kChannels>& DelaySamples() const { return delaySamples_; }
 
 private:
@@ -107,18 +109,6 @@ private:
     float value = 0.0f;
   };
 
-  struct FirBandpass
-  {
-    bool Configure(float lowHz, float highHz, int sampleRate, int taps);
-    void Reset();
-    float Process(float x);
-
-    std::vector<float> coeff;
-    std::vector<float> history;
-    size_t pos = 0;
-    int groupDelay = 0;
-  };
-
   Params params_{};
   std::array<int, kChannels> delaySamples_{{0, 0, 0, 0, 0, 0}};
   std::array<DelayLine, kChannels> delays_;
@@ -132,11 +122,8 @@ private:
   OnePoleHighpass rearHpR_;
   OnePoleLowpass rearLpL_;
   OnePoleLowpass rearLpR_;
-  FirBandpass rearVoiceBandL_;
-  FirBandpass rearVoiceBandR_;
-  DelayLine rearVoiceAlignL_;
-  DelayLine rearVoiceAlignR_;
-  int rearVoiceFirDelay_ = 0;
+  std::vector<float> rearScratchL_;
+  std::vector<float> rearScratchR_;
   OnePoleHighpass centerHp_;
   OnePoleLowpass centerLp_;
 
