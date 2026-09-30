@@ -1,9 +1,9 @@
 // OhlMusicUpmixer.h — stereo -> discrete 5.1 OHL Music spatializer.
 //
-// v0.7 is a sparse ambience extractor, not a second pair of mains:
-//  * rear source starts at zero and receives only unshared L/R residual information,
-//  * a diffuse-content gate opens adaptive ambience while direct/panned program stays mostly front,
-//  * a hard rear-energy budget prevents the surround pair from becoming a duplicate stereo pair.
+// v0.8 keeps the v0.7 rear-energy safety rail but restores an audible surround bed:
+//  * a quiet continuous unique-L/R bed widens ordinary stereo,
+//  * balanced diffuse side information adds a stronger ambience layer,
+//  * hard-panned material stays subtle and the rear RMS budget still prevents rear-main behavior.
 //
 // Output channel order matches Windows/AC3 5.1-back: FL FR FC LFE BL BR.
 #pragma once
@@ -29,7 +29,7 @@ public:
     float ambienceHighWeight = 0.46f;
     float ambienceAttackMs = 100.0f;
     float ambienceReleaseMs = 520.0f;
-    float diffuseThreshold = 0.18f;
+    float diffuseThreshold = 0.10f;
 
     // 0..1 attenuation strength applied to unshared residuals when the packet is strongly
     // center/coherent. Shared content itself is always removed structurally.
@@ -37,7 +37,7 @@ public:
 
     // Maximum average rear-channel RMS as a fraction of average front-channel RMS.
     // This is the final safety rail against "rear mains".
-    float rearBudget = 0.16f;
+    float rearBudget = 0.22f;
 
     float directReject = 0.78f;
     float directThreshold = 1.45f;
