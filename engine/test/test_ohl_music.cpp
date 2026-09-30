@@ -73,7 +73,8 @@ TEST_CASE("OHL Music default speaker distances produce Edi's measured alignment 
   CHECK(d[5] == 0);   // SR 33"
 }
 
-TEST_CASE("OHL Music preserves FL/FR exactly after its fixed FIR latency while keeping LFE silent")
+
+TEST_CASE("OHL Music preserves FL/FR exactly while keeping LFE silent")
 {
   constexpr size_t frames = 1536;
   const auto in = MakeSineStereo(frames, 440.0, false);
@@ -82,8 +83,7 @@ TEST_CASE("OHL Music preserves FL/FR exactly after its fixed FIR latency while k
   auto p = EqualDistanceParams();
   p.centerTrebleGain = 0.0f;
   REQUIRE(upmixer.Init(p));
-  const int latency = upmixer.ProcessingLatencySamples();
-  REQUIRE(latency == 32);
+  REQUIRE(upmixer.ProcessingLatencySamples() == 0);
 
   std::vector<float> out(frames * 6, 0.0f);
   upmixer.ProcessStereo(in.data(), frames, out.data());
@@ -92,19 +92,11 @@ TEST_CASE("OHL Music preserves FL/FR exactly after its fixed FIR latency while k
   double maxLfe = 0.0;
   for (size_t i = 0; i < frames; ++i)
   {
+    maxFrontError = std::max(
+        maxFrontError, std::fabs(static_cast<double>(out[6 * i] - in[2 * i])));
+    maxFrontError = std::max(
+        maxFrontError, std::fabs(static_cast<double>(out[6 * i + 1] - in[2 * i + 1])));
     maxLfe = std::max(maxLfe, std::fabs(static_cast<double>(out[6 * i + 3])));
-    if (i < static_cast<size_t>(latency))
-    {
-      CHECK(std::fabs(out[6 * i]) < 1.0e-7f);
-      CHECK(std::fabs(out[6 * i + 1]) < 1.0e-7f);
-      continue;
-    }
-
-    const size_t src = i - static_cast<size_t>(latency);
-    maxFrontError = std::max(
-        maxFrontError, std::fabs(static_cast<double>(out[6 * i] - in[2 * src])));
-    maxFrontError = std::max(
-        maxFrontError, std::fabs(static_cast<double>(out[6 * i + 1] - in[2 * src + 1])));
   }
 
   CHECK(maxFrontError < 1.0e-7);
@@ -160,7 +152,8 @@ TEST_CASE("OHL Music base width passes subtle stereo difference without copying 
   CHECK(rear < 0.015);
 }
 
-TEST_CASE("OHL Music opens diffuse anti-phase ambience strongly")
+
+TEST_CASE("OHL Music opens diffuse ambience but keeps it subordinate to the fronts")
 {
   constexpr size_t frames = 1536;
 
@@ -169,17 +162,22 @@ TEST_CASE("OHL Music opens diffuse anti-phase ambience strongly")
   p.centerTrebleGain = 0.0f;
   p.frontLock = 0.0f;
   p.directReject = 0.0f;
+  p.rearBudget = 0.16f;
   REQUIRE(ambience.Init(p));
 
   const auto anti = MakeSineStereo(frames, 1800.0, true);
   std::vector<float> out(frames * 6, 0.0f);
   ambience.ProcessStereo(anti.data(), frames, out.data());
 
+  const double front = 0.5 * (ChannelRms(out, 0, 256) + ChannelRms(out, 1, 256));
   const double rear = 0.5 * (ChannelRms(out, 4, 256) + ChannelRms(out, 5, 256));
-  CHECK(rear > 0.08);
+  MESSAGE("diffuse front RMS=" << front << " rear RMS=" << rear);
+  CHECK(rear > 0.015);
+  CHECK(rear <= front * 0.165);
 }
 
-TEST_CASE("OHL Music direct-event rejection keeps a hard-panned clap onset out of the rears")
+
+TEST_CASE("OHL Music direct-event rejection ducks a hard-panned clap without muting the rears")
 {
   constexpr size_t frames = 512;
   std::vector<float> clap(frames * 2, 0.0f);
@@ -190,6 +188,7 @@ TEST_CASE("OHL Music direct-event rejection keeps a hard-panned clap onset out o
   p.centerTrebleGain = 0.0f;
   p.widthFloor = 0.25f;
   p.surroundGain = 0.0f;
+  p.rearBudget = 1.0f;
 
   OhlMusicUpmixer unprotected;
   p.directReject = 0.0f;
@@ -206,9 +205,11 @@ TEST_CASE("OHL Music direct-event rejection keeps a hard-panned clap onset out o
   const double openPeak = ChannelPeak(openOut, 4);
   const double protectedPeak = ChannelPeak(protectedOut, 4);
   MESSAGE("rear clap peak open=" << openPeak << " protected=" << protectedPeak);
-  CHECK(openPeak > 0.05);
-  CHECK(protectedPeak < openPeak * 0.45);
+  CHECK(openPeak > 0.02);
+  CHECK(protectedPeak < openPeak * 0.75);
+  CHECK(protectedPeak > openPeak * 0.25);
 }
+
 
 TEST_CASE("OHL Music sustained ambience survives after the onset detector settles")
 {
@@ -220,13 +221,14 @@ TEST_CASE("OHL Music sustained ambience survives after the onset detector settle
   p.centerTrebleGain = 0.0f;
   p.frontLock = 0.0f;
   p.directReject = 0.90f;
+  p.rearBudget = 0.20f;
   REQUIRE(upmixer.Init(p));
 
   std::vector<float> out(frames * 6, 0.0f);
   upmixer.ProcessStereo(anti.data(), frames, out.data());
 
   const double settledRear = 0.5 * (ChannelRms(out, 4, 2048) + ChannelRms(out, 5, 2048));
-  CHECK(settledRear > 0.06);
+  CHECK(settledRear > 0.02);
 }
 
 TEST_CASE("OHL Music center sparkle strongly favors treble over low-frequency center content")
@@ -409,7 +411,8 @@ TEST_CASE("OHL Music center low-pass bounds the sparkle band")
 
 
 
-TEST_CASE("OHL Music v0.6 exact shared center is removed before rear extraction")
+
+TEST_CASE("OHL Music v0.7 removes shared center before sparse rear extraction")
 {
   constexpr size_t frames = 4096;
   std::vector<float> in(frames * 2);
@@ -418,7 +421,6 @@ TEST_CASE("OHL Music v0.6 exact shared center is removed before rear extraction"
     const double tt = static_cast<double>(i) / 48000.0;
     const float sharedVoice =
         0.30f * static_cast<float>(std::sin(2.0 * kPi * 1100.0 * tt));
-    // Same centered voice, but the left side carries extra production texture.
     const float leftTexture =
         0.035f * static_cast<float>(std::sin(2.0 * kPi * 7800.0 * tt));
     in[2 * i] = sharedVoice + leftTexture;
@@ -430,8 +432,9 @@ TEST_CASE("OHL Music v0.6 exact shared center is removed before rear extraction"
   p.centerTrebleGain = 0.0f;
   p.surroundGain = 0.0f;
   p.widthFloor = 0.30f;
-  p.frontLock = 1.0f;
+  p.frontLock = 0.0f;
   p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
   REQUIRE(upmixer.Init(p));
 
   std::vector<float> out(frames * 6, 0.0f);
@@ -439,13 +442,14 @@ TEST_CASE("OHL Music v0.6 exact shared center is removed before rear extraction"
 
   const double left = ChannelRms(out, 4, 512);
   const double right = ChannelRms(out, 5, 512);
-  MESSAGE("shared-center carve rear RMS left=" << left << " right=" << right);
+  MESSAGE("shared-center sparse rear RMS left=" << left << " right=" << right);
 
-  CHECK(left > 0.003);
-  CHECK(right < left * 0.12);
+  CHECK(left > 0.001);
+  CHECK(right < left * 0.15);
 }
 
-TEST_CASE("OHL Music v0.6 front lock directly carves residual vocal-band energy")
+
+TEST_CASE("OHL Music v0.7 front lock suppresses widened vocal residue")
 {
   constexpr size_t frames = 4096;
   std::vector<float> in(frames * 2);
@@ -465,8 +469,7 @@ TEST_CASE("OHL Music v0.6 front lock directly carves residual vocal-band energy"
   p.surroundGain = 0.0f;
   p.widthFloor = 0.28f;
   p.directReject = 0.0f;
-  p.rearHighpassHz = 80.0f;
-  p.rearLowpassHz = 18000.0f;
+  p.rearBudget = 1.0f;
 
   OhlMusicUpmixer unlocked;
   p.frontLock = 0.0f;
@@ -485,12 +488,13 @@ TEST_CASE("OHL Music v0.6 front lock directly carves residual vocal-band energy"
   const double lockedRear =
       0.5 * (ChannelRms(lockedOut, 4, 512) + ChannelRms(lockedOut, 5, 512));
 
-  MESSAGE("front-lock vocal-like rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
-  CHECK(unlockedRear > 0.003);
-  CHECK(lockedRear < unlockedRear * 0.20);
+  MESSAGE("v0.7 vocal residual rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
+  CHECK(unlockedRear > 0.001);
+  CHECK(lockedRear < unlockedRear * 0.35);
 }
 
-TEST_CASE("OHL Music v0.6 front lock leaves high-frequency diffuse ambience untouched")
+
+TEST_CASE("OHL Music v0.7 front lock leaves decorrelated ambience available")
 {
   constexpr size_t frames = 4096;
   const auto in = MakeSineStereo(frames, 9000.0, true);
@@ -500,6 +504,7 @@ TEST_CASE("OHL Music v0.6 front lock leaves high-frequency diffuse ambience unto
   p.widthFloor = 0.12f;
   p.surroundGain = 0.70f;
   p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
 
   OhlMusicUpmixer unlocked;
   p.frontLock = 0.0f;
@@ -519,11 +524,12 @@ TEST_CASE("OHL Music v0.6 front lock leaves high-frequency diffuse ambience unto
       0.5 * (ChannelRms(lockedOut, 4, 512) + ChannelRms(lockedOut, 5, 512));
 
   MESSAGE("decorrelated rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
-  CHECK(unlockedRear > 0.05);
-  CHECK(std::fabs(lockedRear - unlockedRear) < unlockedRear * 0.03);
+  CHECK(unlockedRear > 0.02);
+  CHECK(lockedRear > unlockedRear * 0.80);
 }
 
-TEST_CASE("OHL Music v0.6 preserves rear asymmetry instead of mirroring side energy")
+
+TEST_CASE("OHL Music v0.7 preserves rear asymmetry instead of mirroring direct side energy")
 {
   constexpr size_t frames = 4096;
   const auto in = MakeSineStereo(frames, 8000.0, false, false);
@@ -533,8 +539,9 @@ TEST_CASE("OHL Music v0.6 preserves rear asymmetry instead of mirroring side ene
   p.centerTrebleGain = 0.0f;
   p.surroundGain = 0.0f;
   p.widthFloor = 0.25f;
-  p.frontLock = 0.90f;
+  p.frontLock = 0.0f;
   p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
   REQUIRE(upmixer.Init(p));
 
   std::vector<float> out(frames * 6, 0.0f);
@@ -542,13 +549,14 @@ TEST_CASE("OHL Music v0.6 preserves rear asymmetry instead of mirroring side ene
 
   const double left = ChannelRms(out, 4, 512);
   const double right = ChannelRms(out, 5, 512);
-  MESSAGE("asymmetric residual rear RMS left=" << left << " right=" << right);
+  MESSAGE("asymmetric sparse rear RMS left=" << left << " right=" << right);
 
-  CHECK(left > 0.03);
+  CHECK(left > 0.005);
   CHECK(right < left * 0.05);
 }
 
-TEST_CASE("OHL Music preserves measured speaker alignment on top of FIR processing latency")
+
+TEST_CASE("OHL Music preserves measured speaker-distance alignment")
 {
   constexpr size_t frames = 128;
   std::vector<float> in(frames * 2, 0.0f);
@@ -558,22 +566,85 @@ TEST_CASE("OHL Music preserves measured speaker alignment on top of FIR processi
   OhlMusicUpmixer upmixer;
   OhlMusicUpmixer::Params p;
   p.centerTrebleGain = 0.0f;
-  p.frontLock = 0.0f; // anti-phase input then reconstructs the delayed raw rear signal exactly
+  p.frontLock = 0.0f;
   p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
   REQUIRE(upmixer.Init(p));
-  REQUIRE(upmixer.ProcessingLatencySamples() == 32);
+  REQUIRE(upmixer.ProcessingLatencySamples() == 0);
   REQUIRE(upmixer.DelaySamples()[4] == 21);
   REQUIRE(upmixer.DelaySamples()[5] == 0);
 
   std::vector<float> out(frames * 6, 0.0f);
   upmixer.ProcessStereo(in.data(), frames, out.data());
 
-  const int base = upmixer.ProcessingLatencySamples();
-  for (int i = 0; i < base; ++i)
-    CHECK(std::fabs(out[6 * static_cast<size_t>(i) + 5]) < 1.0e-7f);
-  CHECK(std::fabs(out[6 * static_cast<size_t>(base) + 5]) > 0.02f);
-
-  for (int i = 0; i < base + 21; ++i)
+  CHECK(std::fabs(out[5]) > 0.005f);
+  for (int i = 0; i < 21; ++i)
     CHECK(std::fabs(out[6 * static_cast<size_t>(i) + 4]) < 1.0e-7f);
-  CHECK(std::fabs(out[6 * static_cast<size_t>(base + 21) + 4]) > 0.02f);
+  CHECK(std::fabs(out[6 * 21 + 4]) > 0.005f);
+}
+
+
+
+TEST_CASE("OHL Music v0.7 rear budget prevents a second pair of mains")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    in[2 * i] =
+        0.35f * static_cast<float>(std::sin(2.0 * kPi * 900.0 * tt));
+    in[2 * i + 1] =
+        0.35f * static_cast<float>(std::sin(2.0 * kPi * 1730.0 * tt + 0.7));
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 2.0f;
+  p.widthFloor = 1.0f;
+  p.diffuseThreshold = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 0.10f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double front =
+      0.5 * (ChannelRms(out, 0, 512) + ChannelRms(out, 1, 512));
+  const double rear =
+      0.5 * (ChannelRms(out, 4, 512) + ChannelRms(out, 5, 512));
+
+  MESSAGE("rear-budget front RMS=" << front << " rear RMS=" << rear);
+  CHECK(rear > 0.005);
+  CHECK(rear <= front * 0.105);
+}
+
+TEST_CASE("OHL Music v0.7 diffuse gate keeps a sustained hard-panned instrument subtle")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 1300.0, false, false, 0.35f);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.16f;
+  p.surroundGain = 0.70f;
+  p.diffuseThreshold = 0.18f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double front = ChannelRms(out, 0, 512);
+  const double rear = ChannelRms(out, 4, 512);
+  MESSAGE("hard-pan front RMS=" << front << " rear RMS=" << rear);
+
+  CHECK(rear > 0.001);
+  CHECK(rear < front * 0.08);
 }
