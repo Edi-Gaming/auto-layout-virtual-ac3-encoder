@@ -61,6 +61,7 @@ public:
   float LastCorrelation() const { return lastCorrelation_; }
   float LastSurroundAmount() const { return surroundAmount_; }
   float LastFrontLockConfidence() const { return lastFrontLockConfidence_; }
+  int ProcessingLatencySamples() const { return rearVoiceFirDelay_; }
   const std::array<int, kChannels>& DelaySamples() const { return delaySamples_; }
 
 private:
