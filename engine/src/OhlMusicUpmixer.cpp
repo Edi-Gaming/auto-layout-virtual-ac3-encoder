@@ -53,6 +53,13 @@ double CenterConfidence(const BandStats& b)
   return std::clamp(positiveCorr * balance, 0.0, 1.0);
 }
 
+float SharedSamePolarity(float l, float r)
+{
+  if ((l > 0.0f && r > 0.0f) || (l < 0.0f && r < 0.0f))
+    return std::copysign(std::min(std::fabs(l), std::fabs(r)), l);
+  return 0.0f;
+}
+
 double AmbienceScore(const BandStats& b)
 {
   const double corr = BandCorrelation(b);
@@ -186,6 +193,10 @@ bool OhlMusicUpmixer::Init(const Params& params)
       !std::isfinite(params.ambienceAttackMs) || params.ambienceAttackMs <= 0.0f ||
       !std::isfinite(params.ambienceReleaseMs) || params.ambienceReleaseMs <= 0.0f ||
       !std::isfinite(params.frontLock) || params.frontLock < 0.0f || params.frontLock > 1.0f ||
+      !std::isfinite(params.frontLockLowHz) || params.frontLockLowHz < 20.0f ||
+      !std::isfinite(params.frontLockHighHz) ||
+      params.frontLockHighHz <= params.frontLockLowHz ||
+      params.frontLockHighHz > 20000.0f ||
       !std::isfinite(params.directReject) || params.directReject < 0.0f ||
       params.directReject > 1.0f ||
       !std::isfinite(params.directThreshold) || params.directThreshold <= 1.0f ||
@@ -230,6 +241,10 @@ bool OhlMusicUpmixer::Init(const Params& params)
   rearHpR_.Configure(params_.rearHighpassHz, params_.sampleRate);
   rearLpL_.Configure(params_.rearLowpassHz, params_.sampleRate);
   rearLpR_.Configure(params_.rearLowpassHz, params_.sampleRate);
+  rearVoiceLowL_.Configure(params_.frontLockLowHz, params_.sampleRate);
+  rearVoiceLowR_.Configure(params_.frontLockLowHz, params_.sampleRate);
+  rearVoiceHighL_.Configure(params_.frontLockHighHz, params_.sampleRate);
+  rearVoiceHighR_.Configure(params_.frontLockHighHz, params_.sampleRate);
   centerHp_.Configure(params_.centerTrebleHz, params_.sampleRate);
   centerLp_.Configure(params_.centerLowpassHz, params_.sampleRate);
 
@@ -255,6 +270,10 @@ void OhlMusicUpmixer::Reset()
   rearHpR_.Reset();
   rearLpL_.Reset();
   rearLpR_.Reset();
+  rearVoiceLowL_.Reset();
+  rearVoiceLowR_.Reset();
+  rearVoiceHighL_.Reset();
+  rearVoiceHighR_.Reset();
   centerHp_.Reset();
   centerLp_.Reset();
   eventFast_.Reset();
@@ -333,14 +352,11 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const float centerConfidence =
       static_cast<float>(std::clamp((fullCorr - 0.35) / 0.65, 0.0, 1.0) * balance);
 
-  // Voice/body lock leans heavily on midband coherence, where lead vocals and other front-anchored
-  // fundamentals usually dominate. Diffuse tails tend to lose positive correlation and therefore
-  // fall out of this classifier naturally.
+  // Keep this diagnostic for future meters, but v0.6 no longer relies on the classifier to
+  // decide whether vocal body is removed. The actual carve is structural and sample-local below.
   const double frontLockConfidence = std::clamp(
       0.20 * CenterConfidence(full) + 0.80 * CenterConfidence(mid), 0.0, 1.0);
   lastFrontLockConfidence_ = static_cast<float>(frontLockConfidence);
-  const float frontLockGain = static_cast<float>(
-      1.0 - static_cast<double>(params_.frontLock) * frontLockConfidence);
 
   for (size_t i = 0; i < frames; ++i)
   {
@@ -359,24 +375,32 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
         std::clamp((ratio - params_.directThreshold) / 2.2f, 0.0f, 1.0f);
     const float directGain = 1.0f - params_.directReject * onset;
 
-    // v0.5 rear topology:
-    //   1) estimate and subtract the coherent center independently from L and R,
-    //   2) keep each residual on its own side instead of forcing a mirrored +/- side pair,
-    //   3) attenuate residuals when the midband classifier says the programme is front-locked.
-    //
-    // A true centered mono source still collapses to zero residual. A left-heavy room reflection
-    // can now stay left-heavy behind the listener instead of being mirrored into both surrounds.
-    // Coherent-center subtraction is structural, not optional: even with Front Lock at 0,
-    // true mono/center content must not be manufactured into the rear channels.
-    const float coherentCenter =
-        midSample * static_cast<float>(frontLockConfidence);
-    const float residualL = l - coherentCenter;
-    const float residualR = r - coherentCenter;
+    // v0.6 rear topology:
+    //   1) remove the exact shared same-polarity component from L/R. This is a direct center carve,
+    //      not a statistical guess, so a mono/centered lead cannot survive merely because it was
+    //      widened elsewhere in the block.
+    //   2) keep the remaining L and R residuals independent so source asymmetry is preserved.
+    //   3) split each residual into low / vocal-body / air bands and directly attenuate only the
+    //      vocal/body band with Front Lock. This keeps high-frequency room/reverb available.
+    const float shared = SharedSamePolarity(l, r);
+    const float residualL = l - shared;
+    const float residualR = r - shared;
 
-    const float rearGain =
-        (params_.widthFloor + surroundAmount_) * directGain * frontLockGain;
-    float rearL = rearLpL_.Process(rearHpL_.Process(residualL * rearGain));
-    float rearR = rearLpR_.Process(rearHpR_.Process(residualR * rearGain));
+    const float lowL = rearVoiceLowL_.Process(residualL);
+    const float lowR = rearVoiceLowR_.Process(residualR);
+    const float toVoiceHighL = rearVoiceHighL_.Process(residualL);
+    const float toVoiceHighR = rearVoiceHighR_.Process(residualR);
+    const float voiceL = toVoiceHighL - lowL;
+    const float voiceR = toVoiceHighR - lowR;
+    const float airL = residualL - toVoiceHighL;
+    const float airR = residualR - toVoiceHighR;
+    const float voiceGain = 1.0f - params_.frontLock;
+    const float shapedL = lowL + voiceGain * voiceL + airL;
+    const float shapedR = lowR + voiceGain * voiceR + airR;
+
+    const float rearGain = (params_.widthFloor + surroundAmount_) * directGain;
+    float rearL = rearLpL_.Process(rearHpL_.Process(shapedL * rearGain));
+    float rearR = rearLpR_.Process(rearHpR_.Process(shapedR * rearGain));
     rearL *= params_.rearLeftTrim;
     rearR *= params_.rearRightTrim;
 
