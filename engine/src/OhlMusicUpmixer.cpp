@@ -322,8 +322,11 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
       (ambience - static_cast<double>(params_.diffuseThreshold)) /
           (1.0 - static_cast<double>(params_.diffuseThreshold)),
       0.0, 1.0);
-  const double sparseDiffuse = gateNorm * gateNorm;
-  float target = static_cast<float>(params_.surroundGain * sparseDiffuse);
+  // v0.7 squared this gate, which made ordinary music almost never open the surrounds.
+  // v0.8 uses a square-root law: genuinely diffuse material still reaches full scale, but modest
+  // stereo ambience becomes audible instead of being numerically crushed.
+  const double diffuseOpen = std::sqrt(gateNorm);
+  float target = static_cast<float>(params_.surroundGain * diffuseOpen);
   target = std::clamp(target, 0.0f, params_.surroundGain);
 
   if (!gainInitialized_)
@@ -376,40 +379,52 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float ratio = fast / (slow + 1.0e-5f);
     const float onset =
         std::clamp((ratio - params_.directThreshold) / 2.2f, 0.0f, 1.0f);
-    // v0.7 sparse rear source:
-    //   1) remove same-polarity content shared by L/R sample-by-sample,
-    //   2) keep only the leftover unique/asymmetric residual on each side,
-    //   3) strongly suppress that residual while the programme is center/coherent,
-    //   4) open adaptive level only when packet-level analysis says the stereo field is diffuse.
+    // v0.8 rear source has two layers:
     //
-    // Critically, raw L or R is never used as the surround source.
+    //   A) UNIQUE BED — shared same-polarity L/R content is removed, leaving only what differs
+    //      between the channels. This is the quiet continuous widening contribution.
+    //
+    //   B) DIFFUSE SPREAD — balanced stereo side information gets a controlled +/- contribution
+    //      as the diffuse detector opens. Weighting it by packet L/R balance prevents a hard-panned
+    //      direct instrument from being mirrored into the opposite surround.
+    //
+    // Raw L/R is still never copied directly into SL/SR.
     const float shared = SharedSamePolarity(l, r);
-    float residualL = l - shared;
-    float residualR = r - shared;
+    float uniqueL = l - shared;
+    float uniqueR = r - shared;
+    const float side = 0.5f * (l - r);
 
     if (blockNearlyMono)
     {
-      residualL = 0.0f;
-      residualR = 0.0f;
+      uniqueL = 0.0f;
+      uniqueR = 0.0f;
     }
 
-    // Width floor is intentionally only one quarter strength when the diffuse gate is closed.
-    // That preserves a subtle stage-widening trace without turning hard-panned instruments into
-    // rear-channel copies.
-    const float diffuseOpen = static_cast<float>(sparseDiffuse);
-    const float baseWidth =
-        params_.widthFloor * (0.25f + 0.75f * diffuseOpen);
+    const float open = static_cast<float>(diffuseOpen);
+    const float packetBalance = static_cast<float>(balance);
 
-    // Direct-event protection now ducks rather than mutes. Even at 100% UI setting, the onset
-    // detector can remove at most 55% so snare/clap hits do not punch holes in the surround bed.
-    const float effectiveReject = 0.55f * params_.directReject;
+    // Unlike v0.7, the base bed stays meaningfully audible even when the diffuse detector is only
+    // partly open. Front Lock acts on this direct residual so centered/widened vocal body stays
+    // forward. The diffuse spread bypasses Front Lock because decorrelated tails are exactly what
+    // we want to retain.
+    const float baseWidth =
+        params_.widthFloor * (0.40f + 0.60f * open);
+    const float uniqueBedL = uniqueL * baseWidth * frontLockGain;
+    const float uniqueBedR = uniqueR * baseWidth * frontLockGain;
+
+    const float spreadGain =
+        0.55f * surroundAmount_ * open * packetBalance;
+    const float spreadL = side * spreadGain;
+    const float spreadR = -side * spreadGain;
+
+    // Direct-event protection ducks attacks but cannot collapse the rear bed.
+    const float effectiveReject = 0.45f * params_.directReject;
     const float softenedDirectGain = 1.0f - effectiveReject * onset;
 
-    const float rearGain =
-        (baseWidth + surroundAmount_) * softenedDirectGain * frontLockGain;
-
-    float rearL = rearLpL_.Process(rearHpL_.Process(residualL * rearGain));
-    float rearR = rearLpR_.Process(rearHpR_.Process(residualR * rearGain));
+    float rearL = rearLpL_.Process(
+        rearHpL_.Process((uniqueBedL + spreadL) * softenedDirectGain));
+    float rearR = rearLpR_.Process(
+        rearHpR_.Process((uniqueBedR + spreadR) * softenedDirectGain));
     rearL *= params_.rearLeftTrim;
     rearR *= params_.rearRightTrim;
 
