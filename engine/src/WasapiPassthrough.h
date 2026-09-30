@@ -56,6 +56,8 @@ public:
     double musicAmbienceAttackMs = 100.0;
     double musicAmbienceReleaseMs = 520.0;
     double musicFrontLock = 0.88;
+    double musicFrontLockLowHz = 250.0;
+    double musicFrontLockHighHz = 5200.0;
     double musicDirectReject = 0.78;
     double musicDirectThreshold = 1.45;
     double musicDirectRecoveryMs = 18.0;
