@@ -859,7 +859,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.11 adaptive matrix lab \u2014 true per-bin routing on the clean v0.10 front stage.",
+      Label(hwnd, L"v0.11.1 visual lab \u2014 same v0.11 DSP, 30 Hz analyzer + modern controls.",
             21, 48, 1040, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
