@@ -1234,7 +1234,19 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_COMMAND:
     {
       const int id = LOWORD(wp);
+      const int notification = HIWORD(wp);
       if (!state) break;
+
+      if (notification == EN_CHANGE &&
+          (id == kFl || id == kC || id == kFr || id == kSl || id == kSr))
+      {
+        if (id == kFl) state->fl = std::clamp(GetDoubleEdit(hwnd, kFl, state->fl), 0.0, 300.0);
+        if (id == kC)  state->c  = std::clamp(GetDoubleEdit(hwnd, kC, state->c), 0.0, 300.0);
+        if (id == kFr) state->fr = std::clamp(GetDoubleEdit(hwnd, kFr, state->fr), 0.0, 300.0);
+        if (id == kSl) state->sl = std::clamp(GetDoubleEdit(hwnd, kSl, state->sl), 0.0, 300.0);
+        if (id == kSr) state->sr = std::clamp(GetDoubleEdit(hwnd, kSr, state->sr), 0.0, 300.0);
+        UpdateOhlStageVisual(GetDlgItem(hwnd, kStageViz), StageDistances(*state), gLastUiMetrics);
+      }
 
       if (id == kViewMix)
       {
