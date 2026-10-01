@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -323,6 +324,24 @@ std::array<double, 4> MetricQuad(const std::map<std::string, std::string>& field
   return out;
 }
 
+std::array<double, 6> MetricSix(const std::map<std::string, std::string>& fields,
+                                const char* key)
+{
+  std::array<double, 6> out{{0, 0, 0, 0, 0, 0}};
+  auto it = fields.find(key);
+  if (it == fields.end()) return out;
+  std::istringstream in(it->second);
+  std::string item;
+  for (size_t i = 0; i < out.size() && std::getline(in, item, ','); ++i)
+  {
+    char* end = nullptr;
+    const double v = std::strtod(item.c_str(), &end);
+    if (end && end != item.c_str() && std::isfinite(v))
+      out[i] = v;
+  }
+  return out;
+}
+
 OhlAnalyzerMetrics ParseMetricsResponse(const std::string& response)
 {
   OhlAnalyzerMetrics m;
@@ -331,6 +350,7 @@ OhlAnalyzerMetrics ParseMetricsResponse(const std::string& response)
     return m;
 
   m.online = true;
+  m.sequence = static_cast<uint64_t>(std::max(0.0, MetricDouble(f, "seq")));
   m.ambience = static_cast<float>(MetricDouble(f, "amb"));
   m.center = static_cast<float>(MetricDouble(f, "center"));
   m.spatialBins = static_cast<float>(MetricDouble(f, "bins"));
@@ -338,6 +358,10 @@ OhlAnalyzerMetrics ParseMetricsResponse(const std::string& response)
   m.rearOpen = static_cast<float>(MetricDouble(f, "rear"));
   m.frontLock = static_cast<float>(MetricDouble(f, "lock"));
   m.budgetScale = static_cast<float>(MetricDouble(f, "budget", 1.0));
+
+  const auto spk = MetricSix(f, "spk");
+  for (size_t i = 0; i < m.speakerRms.size(); ++i)
+    m.speakerRms[i] = static_cast<float>(spk[i]);
 
   const auto own = MetricQuad(f, "own");
   const auto ctr = MetricQuad(f, "bandcenter");
@@ -368,17 +392,54 @@ void StartMetricsWorker(HWND hwnd)
   gMetricsThread = std::thread([hwnd]()
   {
     auto next = std::chrono::steady_clock::now();
+    OhlAnalyzerMetrics lastGood{};
+    uint64_t lastPostedSequence = std::numeric_limits<uint64_t>::max();
+    int consecutiveMisses = 0;
+    bool offlinePosted = false;
+
     while (!gMetricsStop.load())
     {
-      auto* metrics = new OhlAnalyzerMetrics();
       std::string response;
-      if (SendModeCommand("metrics", response, 15))
-        *metrics = ParseMetricsResponse(response);
-
-      if (!PostMessageW(hwnd, kMetricsMessage, 0, reinterpret_cast<LPARAM>(metrics)))
+      if (SendModeCommand("metrics", response, 40))
       {
-        delete metrics;
-        break;
+        const OhlAnalyzerMetrics parsed = ParseMetricsResponse(response);
+        if (parsed.online)
+        {
+          consecutiveMisses = 0;
+          offlinePosted = false;
+          lastGood = parsed;
+
+          // The engine updates telemetry once per AC3 music packet. Do not repaint the UI for
+          // duplicate named-pipe reads of the same packet.
+          if (parsed.sequence != lastPostedSequence)
+          {
+            auto* metrics = new OhlAnalyzerMetrics(parsed);
+            if (!PostMessageW(hwnd, kMetricsMessage, 0, reinterpret_cast<LPARAM>(metrics)))
+            {
+              delete metrics;
+              break;
+            }
+            lastPostedSequence = parsed.sequence;
+          }
+        }
+      }
+      else
+      {
+        ++consecutiveMisses;
+
+        // A single named-pipe timeout used to flash the analyzer to zero/offline. Hold the last
+        // valid frame through short misses and only declare offline after a sustained outage.
+        if (consecutiveMisses >= 12 && !offlinePosted)
+        {
+          auto* metrics = new OhlAnalyzerMetrics(lastGood);
+          metrics->online = false;
+          if (!PostMessageW(hwnd, kMetricsMessage, 0, reinterpret_cast<LPARAM>(metrics)))
+          {
+            delete metrics;
+            break;
+          }
+          offlinePosted = true;
+        }
       }
 
       next += std::chrono::milliseconds(kMetricsIntervalMs);
