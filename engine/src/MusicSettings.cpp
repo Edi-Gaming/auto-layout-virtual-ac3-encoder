@@ -2,6 +2,7 @@
 #include "BrandIcon.h"
 #include "ModeControl.h"
 #include "ModernControls.h"
+#include "MacroKnob.h"
 #include "AnalyzerVisual.h"
 #include "StageVisual.h"
 
@@ -93,6 +94,8 @@ enum ControlId
   kPresetWide,
   kPresetAmbient,
   kPresetV03,
+  kViewMix,
+  kViewLab,
   kStoreA,
   kRecallA,
   kStoreB,
@@ -113,10 +116,13 @@ HFONT gUiFont = nullptr;
 HFONT gSmallFont = nullptr;
 
 constexpr UINT kMetricsMessage = WM_APP + 77;
-constexpr int kMetricsIntervalMs = 33;
+constexpr int kMetricsIntervalMs = 20;
 std::atomic_bool gMetricsStop{false};
 std::thread gMetricsThread;
 OhlAnalyzerMetrics gLastUiMetrics{};
+std::vector<HWND> gMixControls;
+std::vector<HWND> gLabControls;
+bool gMixPage = true;
 bool gHaveSnapshotA = false;
 bool gHaveSnapshotB = false;
 
