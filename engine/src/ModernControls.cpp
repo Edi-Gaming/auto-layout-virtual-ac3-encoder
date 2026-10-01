@@ -51,7 +51,7 @@ int SliderX(const RECT& r, const SliderState& s)
 {
   const int pad = 9;
   const int left = r.left + pad;
-  const int right = std::max(left + 1, r.right - pad);
+  const int right = std::max(left + 1, static_cast<int>(r.right) - pad);
   const double t = s.max == s.min
       ? 0.0
       : static_cast<double>(s.pos - s.min) / static_cast<double>(s.max - s.min);
@@ -64,7 +64,7 @@ void SetSliderFromX(HWND hwnd, SliderState& s, int x, bool notify)
   GetClientRect(hwnd, &r);
   const int pad = 9;
   const int left = r.left + pad;
-  const int right = std::max(left + 1, r.right - pad);
+  const int right = std::max(left + 1, static_cast<int>(r.right) - pad);
   const double t = std::clamp(
       static_cast<double>(x - left) / static_cast<double>(right - left), 0.0, 1.0);
   const int next = s.min + static_cast<int>(std::lround(t * (s.max - s.min)));
@@ -192,7 +192,7 @@ LRESULT CALLBACK SliderProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       RECT r{};
       GetClientRect(hwnd, &r);
       HDC mem = CreateCompatibleDC(dc);
-      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, r.right), std::max(1, r.bottom));
+      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, static_cast<int>(r.right)), std::max(1, static_cast<int>(r.bottom)));
       HGDIOBJ old = SelectObject(mem, bmp);
       FillRect(mem, &r, reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
       HBRUSH bg = CreateSolidBrush(kBg);
@@ -206,7 +206,7 @@ LRESULT CALLBACK SliderProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         FillRound(mem, track, 5, kTrack);
 
         const int x = SliderX(r, *s);
-        RECT fill{track.left, track.top, std::max(track.left + 1, x), track.bottom};
+        RECT fill{track.left, track.top, std::max(static_cast<int>(track.left) + 1, x), track.bottom};
         FillRound(mem, fill, 5, kAccent);
 
         const int radius = s->dragging ? 7 : 6;
@@ -315,7 +315,7 @@ LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       HDC dc = BeginPaint(hwnd, &ps);
       RECT r{}; GetClientRect(hwnd, &r);
       HDC mem = CreateCompatibleDC(dc);
-      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, r.right), std::max(1, r.bottom));
+      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, static_cast<int>(r.right)), std::max(1, static_cast<int>(r.bottom)));
       HGDIOBJ old = SelectObject(mem, bmp);
 
       const COLORREF fill = s && s->pressed ? RGB(38, 72, 98) :
@@ -372,7 +372,7 @@ LRESULT CALLBACK GroupProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       HDC dc = BeginPaint(hwnd, &ps);
       RECT r{}; GetClientRect(hwnd, &r);
       HDC mem = CreateCompatibleDC(dc);
-      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, r.right), std::max(1, r.bottom));
+      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, static_cast<int>(r.right)), std::max(1, static_cast<int>(r.bottom)));
       HGDIOBJ old = SelectObject(mem, bmp);
 
       HBRUSH bg = CreateSolidBrush(kBg);
