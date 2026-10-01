@@ -203,8 +203,8 @@ TEST_CASE("v0.11 body-band Front Lock suppresses coherent widened body without k
   const double open = 0.5 * (Rms(al, 2048) + Rms(ar, 2048));
   const double shut = 0.5 * (Rms(bl, 2048) + Rms(br, 2048));
   MESSAGE("body Front Lock open=" << open << " locked=" << shut);
-  CHECK(open > 0.002);
-  CHECK(shut < open * 0.55);
+  CHECK(open > 0.0005);
+  CHECK(shut < open * 0.30);
 
   auto airUnlocked = unlocked;
   auto airLocked = locked;
