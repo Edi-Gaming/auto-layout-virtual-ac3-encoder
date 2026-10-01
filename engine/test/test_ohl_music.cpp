@@ -829,3 +829,111 @@ TEST_CASE("OHL Music v0.10 keeps dry hard-panned material from opening adaptive 
   CHECK(upmixer.LastSpatialBinFraction() < 0.10f);
   CHECK(upmixer.LastSurroundAmount() < 0.05f);
 }
+
+
+TEST_CASE("OHL Music v0.11 per-bin routing preserves fronts after exact spectral latency")
+{
+  constexpr size_t frames = 3072;
+  const auto in = MakeSineStereo(frames, 733.0, false);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.perBinRouting = 1.0f;
+  p.centerTrebleGain = 0.0f;
+  p.centerWidth = 1.0f;
+  REQUIRE(upmixer.Init(p));
+  REQUIRE(upmixer.ProcessingLatencySamples() == 512);
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  double prePeak = 0.0;
+  double maxError = 0.0;
+  for (size_t i = 0; i < frames; ++i)
+  {
+    if (i < 512)
+    {
+      prePeak = std::max(prePeak, std::fabs(static_cast<double>(out[6 * i])));
+      prePeak = std::max(prePeak, std::fabs(static_cast<double>(out[6 * i + 1])));
+      continue;
+    }
+
+    const size_t src = i - 512;
+    maxError = std::max(
+        maxError, std::fabs(static_cast<double>(out[6 * i] - in[2 * src])));
+    maxError = std::max(
+        maxError, std::fabs(static_cast<double>(out[6 * i + 1] - in[2 * src + 1])));
+  }
+
+  MESSAGE("v0.11 front pre-latency peak=" << prePeak << " max error=" << maxError);
+  CHECK(prePeak < 1.0e-7);
+  CHECK(maxError < 1.0e-7);
+}
+
+TEST_CASE("OHL Music v0.11 Center Width defaults to untouched phantom center and can focus into C")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 1000.0, false, true, 0.28f);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.perBinRouting = 0.0f;
+
+  OhlMusicUpmixer phantom;
+  p.centerWidth = 1.0f;
+  REQUIRE(phantom.Init(p));
+  std::vector<float> phantomOut(frames * 6, 0.0f);
+  phantom.ProcessStereo(in.data(), frames, phantomOut.data());
+
+  OhlMusicUpmixer focused;
+  p.centerWidth = 0.0f;
+  REQUIRE(focused.Init(p));
+  std::vector<float> focusedOut(frames * 6, 0.0f);
+  focused.ProcessStereo(in.data(), frames, focusedOut.data());
+
+  const double phantomFront =
+      0.5 * (ChannelRms(phantomOut, 0, 512) + ChannelRms(phantomOut, 1, 512));
+  const double phantomCenter = ChannelRms(phantomOut, 2, 512);
+  const double focusedFront =
+      0.5 * (ChannelRms(focusedOut, 0, 512) + ChannelRms(focusedOut, 1, 512));
+  const double focusedCenter = ChannelRms(focusedOut, 2, 512);
+
+  MESSAGE("center width phantom F=" << phantomFront << " C=" << phantomCenter
+          << " focused F=" << focusedFront << " C=" << focusedCenter);
+
+  CHECK(phantomCenter < 1.0e-7);
+  CHECK(focusedCenter > phantomFront * 0.45);
+  CHECK(focusedFront < phantomFront * 0.70);
+  CHECK(focusedFront > phantomFront * 0.45);
+}
+
+TEST_CASE("OHL Music v0.11 hard rear budget still caps the true per-bin renderer")
+{
+  constexpr size_t frames = 8192;
+  const auto in = MakeSineStereo(frames, 4200.0, true, true, 0.32f);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.perBinRouting = 1.0f;
+  p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 0.10f;
+  p.surroundGain = 2.0f;
+  p.widthFloor = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const size_t skip = 2048;
+  const double front =
+      0.5 * (ChannelRms(out, 0, skip) + ChannelRms(out, 1, skip));
+  const double rear =
+      0.5 * (ChannelRms(out, 4, skip) + ChannelRms(out, 5, skip));
+
+  MESSAGE("v0.11 per-bin budget front=" << front << " rear=" << rear);
+  CHECK(front > 0.10);
+  CHECK(rear > 0.002);
+  CHECK(rear <= front * 0.105);
+}
