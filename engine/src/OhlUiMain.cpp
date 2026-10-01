@@ -1,8 +1,8 @@
 #include "ModeControl.h"
 #include "MusicSettings.h"
 
-#include <shellapi.h>
 #include <windows.h>
+#include <shellapi.h>
 
 #include <string>
 
