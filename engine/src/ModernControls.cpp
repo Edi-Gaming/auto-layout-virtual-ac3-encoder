@@ -318,6 +318,10 @@ LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, static_cast<int>(r.right)), std::max(1, static_cast<int>(r.bottom)));
       HGDIOBJ old = SelectObject(mem, bmp);
 
+      HBRUSH pageBg = CreateSolidBrush(kBg);
+      FillRect(mem, &r, pageBg);
+      DeleteObject(pageBg);
+
       const COLORREF fill = s && s->pressed ? RGB(38, 72, 98) :
                             s && s->hover ? kCardHot : kCard;
       FillRound(mem, r, 8, fill);
