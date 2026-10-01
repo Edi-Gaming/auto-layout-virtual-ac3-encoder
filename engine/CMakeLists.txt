@@ -49,6 +49,8 @@ add_library(ac3core STATIC
   src/OhlMusicUpmixer.h
   src/OhlSpatialAnalyzer.cpp
   src/OhlSpatialAnalyzer.h
+  src/OhlSpectralRouter.cpp
+  src/OhlSpectralRouter.h
   src/RingBuffer.h
 )
 target_include_directories(ac3core PUBLIC src)
