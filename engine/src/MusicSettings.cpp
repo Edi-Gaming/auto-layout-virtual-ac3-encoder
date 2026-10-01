@@ -538,7 +538,7 @@ HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool us
 
 HWND Group(HWND parent, const wchar_t* text, int x, int y, int w, int h)
 {
-  gCardRects.push_back(RECT{x, y + 7, x + w, y + h});
+  gCardRects.push_back(RECT{x, y, x + w, y + h});
   HWND c = CreateWindowW(kOhlGroupClass, text, WS_CHILD | WS_VISIBLE,
                          x, y, w, h, parent, nullptr, nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
