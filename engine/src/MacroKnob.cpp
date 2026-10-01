@@ -2,6 +2,7 @@
 
 #include <commctrl.h>
 #include <windowsx.h>
+#include <gdiplus.h>
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,30 @@ constexpr COLORREF kTrack = RGB(43, 53, 69);
 constexpr COLORREF kText = RGB(238, 243, 251);
 constexpr COLORREF kMuted = RGB(143, 158, 181);
 constexpr COLORREF kAccentDefault = RGB(88, 181, 255);
+
+struct GdiPlusScope
+{
+  ULONG_PTR token = 0;
+  Gdiplus::GdiplusStartupInput input{};
+
+  GdiPlusScope()
+  {
+    Gdiplus::GdiplusStartup(&token, &input, nullptr);
+  }
+
+  ~GdiPlusScope()
+  {
+    if (token)
+      Gdiplus::GdiplusShutdown(token);
+  }
+};
+
+GdiPlusScope gGdiPlus;
+
+Gdiplus::Color GpColor(COLORREF c, BYTE alpha = 255)
+{
+  return Gdiplus::Color(alpha, GetRValue(c), GetGValue(c), GetBValue(c));
+}
 
 struct KnobState
 {
@@ -100,34 +125,6 @@ POINT ArcPoint(int cx, int cy, int radius, double degrees)
   return {
       cx + static_cast<LONG>(std::lround(radius * std::cos(rad))),
       cy + static_cast<LONG>(std::lround(radius * std::sin(rad)))};
-}
-
-void DrawArcSegments(HDC dc,
-                     int cx,
-                     int cy,
-                     int radius,
-                     double startDeg,
-                     double endDeg,
-                     int segments,
-                     int width,
-                     COLORREF color)
-{
-  HPEN pen = CreatePen(PS_SOLID, width, color);
-  HGDIOBJ old = SelectObject(dc, pen);
-
-  POINT previous = ArcPoint(cx, cy, radius, startDeg);
-  for (int i = 1; i <= segments; ++i)
-  {
-    const double t = static_cast<double>(i) / static_cast<double>(segments);
-    const double deg = startDeg + (endDeg - startDeg) * t;
-    const POINT p = ArcPoint(cx, cy, radius, deg);
-    MoveToEx(dc, previous.x, previous.y, nullptr);
-    LineTo(dc, p.x, p.y);
-    previous = p;
-  }
-
-  SelectObject(dc, old);
-  DeleteObject(pen);
 }
 
 LRESULT CALLBACK KnobProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -297,42 +294,67 @@ LRESULT CALLBACK KnobProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         DrawTextW(mem, title.c_str(), -1, &titleRect,
                   DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        RECT subtitleRect{14, 34, r.right - 14, 58};
+        RECT subtitleRect{14, 35, r.right - 14, 78};
         SetTextColor(mem, kMuted);
         DrawTextW(mem, subtitle.c_str(), -1, &subtitleRect,
-                  DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+                  DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
 
         const int cx = static_cast<int>(r.right) / 2;
-        const int cy = 108;
-        const int radius = 37;
-        constexpr double startDeg = 135.0;
-        constexpr double sweepDeg = 270.0;
-
-        DrawArcSegments(mem, cx, cy, radius, startDeg, startDeg + sweepDeg,
-                        52, 7, kTrack);
-
+        const int cy = 123;
+        const int radius = 39;
+        constexpr float startDeg = 135.0f;
+        constexpr float sweepDeg = 270.0f;
         const double t = Normalize(*s);
-        if (t > 0.001)
-          DrawArcSegments(mem, cx, cy, radius, startDeg,
-                          startDeg + sweepDeg * t,
-                          std::max(2, static_cast<int>(std::lround(52 * t))),
-                          7, s->accent);
 
-        const POINT pointer = ArcPoint(cx, cy, radius - 8, startDeg + sweepDeg * t);
-        HPEN pointerPen = CreatePen(PS_SOLID, 3, s->accent);
-        oldPen = SelectObject(mem, pointerPen);
-        MoveToEx(mem, cx, cy, nullptr);
-        LineTo(mem, pointer.x, pointer.y);
-        SelectObject(mem, oldPen);
-        DeleteObject(pointerPen);
+        {
+          Gdiplus::Graphics graphics(mem);
+          graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+          graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
 
-        HBRUSH hub = CreateSolidBrush(Blend(RGB(35, 43, 56), s->accent, 0.25f));
-        oldBrush = SelectObject(mem, hub);
-        oldPen = SelectObject(mem, GetStockObject(NULL_PEN));
-        Ellipse(mem, cx - 19, cy - 19, cx + 20, cy + 20);
-        SelectObject(mem, oldPen);
-        SelectObject(mem, oldBrush);
-        DeleteObject(hub);
+          Gdiplus::RectF arcRect(
+              static_cast<Gdiplus::REAL>(cx - radius),
+              static_cast<Gdiplus::REAL>(cy - radius),
+              static_cast<Gdiplus::REAL>(radius * 2),
+              static_cast<Gdiplus::REAL>(radius * 2));
+
+          Gdiplus::Pen trackPen(GpColor(kTrack), 7.0f);
+          trackPen.SetStartCap(Gdiplus::LineCapRound);
+          trackPen.SetEndCap(Gdiplus::LineCapRound);
+          graphics.DrawArc(&trackPen, arcRect, startDeg, sweepDeg);
+
+          if (t > 0.001)
+          {
+            Gdiplus::Pen activePen(GpColor(s->accent), 7.0f);
+            activePen.SetStartCap(Gdiplus::LineCapRound);
+            activePen.SetEndCap(Gdiplus::LineCapRound);
+            graphics.DrawArc(
+                &activePen,
+                arcRect,
+                startDeg,
+                static_cast<Gdiplus::REAL>(sweepDeg * t));
+          }
+
+          const POINT pointer = ArcPoint(
+              cx, cy, radius - 8,
+              static_cast<double>(startDeg) + static_cast<double>(sweepDeg) * t);
+          Gdiplus::Pen pointerPen(GpColor(s->accent), 3.0f);
+          pointerPen.SetStartCap(Gdiplus::LineCapRound);
+          pointerPen.SetEndCap(Gdiplus::LineCapRound);
+          graphics.DrawLine(
+              &pointerPen,
+              static_cast<Gdiplus::REAL>(cx),
+              static_cast<Gdiplus::REAL>(cy),
+              static_cast<Gdiplus::REAL>(pointer.x),
+              static_cast<Gdiplus::REAL>(pointer.y));
+
+          Gdiplus::SolidBrush hub(
+              GpColor(Blend(RGB(35, 43, 56), s->accent, 0.25f)));
+          graphics.FillEllipse(
+              &hub,
+              static_cast<Gdiplus::REAL>(cx - 19),
+              static_cast<Gdiplus::REAL>(cy - 19),
+              39.0f, 39.0f);
+        }
 
         wchar_t value[32] = {};
         swprintf_s(value, L"%d%%", s->pos);
@@ -341,9 +363,9 @@ LRESULT CALLBACK KnobProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         DrawTextW(mem, value, -1, &valueRect,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        RECT hintRect{14, r.bottom - 26, r.right - 14, r.bottom - 9};
+        RECT hintRect{14, r.bottom - 27, r.right - 14, r.bottom - 8};
         SetTextColor(mem, kMuted);
-        DrawTextW(mem, L"drag vertically  •  wheel  •  arrows", -1, &hintRect,
+        DrawTextW(mem, L"drag  \u2022  wheel  \u2022  arrows", -1, &hintRect,
                   DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
         if (oldFont) SelectObject(mem, oldFont);
