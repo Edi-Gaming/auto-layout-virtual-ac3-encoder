@@ -123,6 +123,7 @@ std::thread gMetricsThread;
 OhlAnalyzerMetrics gLastUiMetrics{};
 std::vector<HWND> gMixControls;
 std::vector<HWND> gLabControls;
+std::vector<RECT> gCardRects;
 bool gMixPage = true;
 bool gHaveSnapshotA = false;
 bool gHaveSnapshotB = false;
@@ -512,10 +513,24 @@ bool WriteValues(const std::string& path, const std::map<std::string, std::strin
   return true;
 }
 
+bool PointInsideCard(int x, int y)
+{
+  POINT p{x, y};
+  for (const RECT& r : gCardRects)
+    if (PtInRect(&r, p))
+      return true;
+  return false;
+}
+
 HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool useSmallFont = false)
 {
-  HWND c = CreateWindowW(L"STATIC", text, WS_CHILD | WS_VISIBLE,
-                         x, y, w, h, parent, nullptr, nullptr, nullptr);
+  const bool onCard = PointInsideCard(x + 2, y + 2);
+  HWND c = CreateWindowW(
+      onCard ? kOhlCardLabelClass : L"STATIC",
+      text,
+      WS_CHILD | WS_VISIBLE,
+      x, y, w, h,
+      parent, nullptr, nullptr, nullptr);
   SendMessageW(c, WM_SETFONT,
                reinterpret_cast<WPARAM>(useSmallFont ? gSmallFont : gUiFont), TRUE);
   return c;
@@ -523,6 +538,7 @@ HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool us
 
 HWND Group(HWND parent, const wchar_t* text, int x, int y, int w, int h)
 {
+  gCardRects.push_back(RECT{x, y + 7, x + w, y + h});
   HWND c = CreateWindowW(kOhlGroupClass, text, WS_CHILD | WS_VISIBLE,
                          x, y, w, h, parent, nullptr, nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
@@ -611,8 +627,8 @@ void SetUiPage(HWND hwnd, bool mix)
   SetDlgItemTextW(
       hwnd,
       kStatus,
-      mix ? L"MIX view — tune by ear; LAB holds the engineering controls."
-          : L"LAB view — advanced detector, matrix, voicing and geometry tuning.");
+      mix ? L"MIX view \u2014 tune by ear; LAB holds the engineering controls."
+          : L"LAB view \u2014 advanced detector, matrix, voicing and geometry tuning.");
   InvalidateRect(hwnd, nullptr, FALSE);
 }
 
@@ -993,6 +1009,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
       gMixControls.clear();
       gLabControls.clear();
+      gCardRects.clear();
 
       gTitleFont = CreateFontW(-29, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
@@ -1040,22 +1057,22 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       // ---------------------------------------------------------------------------------------
       mix(Knob(
           hwnd, kAmbience,
-          L"AMBIENCE\nHow much room and diffuse energy can bloom behind you.",
+          L"AMBIENCE\nRoom and diffuse energy allowed to bloom behind you.",
           20, 110, 245, 230, 120, PercentToSlider(state->ambience),
           RGB(88, 181, 255)));
       mix(Knob(
           hwnd, kWidth,
-          L"WIDTH\nThe quiet continuous side bed that keeps the stage breathing.",
+          L"WIDTH\nStable side bed that keeps the stage breathing.",
           275, 110, 245, 230, 60, PercentToSlider(state->width),
           RGB(86, 214, 154)));
       mix(Knob(
           hwnd, kSpectralIntelligence,
-          L"INTELLIGENCE\nHow strongly FFT scene recognition drives spatial decisions.",
+          L"INTELLIGENCE\nHow aggressively OHL recognizes spatial cues.",
           20, 350, 245, 230, 100, PercentToSlider(state->spectralIntelligence),
           RGB(241, 187, 84)));
       mix(Knob(
           hwnd, kFrontLock,
-          L"FRONT LOCK\nHow hard vocals and direct material stay anchored up front.",
+          L"FRONT LOCK\nKeeps vocals and direct material anchored up front.",
           275, 350, 245, 230, 100, PercentToSlider(state->frontLock),
           RGB(173, 126, 255)));
 
