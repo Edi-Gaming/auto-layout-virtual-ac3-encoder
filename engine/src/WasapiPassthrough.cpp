@@ -609,43 +609,74 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
         musicUpmixer_.ProcessStereo(
             musicStereo_.data(), static_cast<size_t>(framesPerPacket_), music51_.data());
 
-        if (params_.musicTelemetry)
+        MusicTelemetrySnapshot snapshot;
+        snapshot.sequence = ++musicPacketSequence_;
+        snapshot.engineFrameCounter = engineFrameCounter_;
+        snapshot.ambience = musicUpmixer_.LastSpectralAmbience();
+        snapshot.centerConfidence = musicUpmixer_.LastSpectralCenter();
+        snapshot.spatialBinFraction = musicUpmixer_.LastSpatialBinFraction();
+        snapshot.transientConfidence = musicUpmixer_.LastSpectralTransient();
+        snapshot.rearOpen = musicUpmixer_.LastSurroundAmount();
+        snapshot.frontLockConfidence = musicUpmixer_.LastFrontLockConfidence();
+        snapshot.rearBudgetScale = musicUpmixer_.LastRearBudgetScale();
+
+        const auto& own = musicUpmixer_.LastBandOwnership();
+        const auto& ctr = musicUpmixer_.LastBandCenter();
+        for (size_t metric = 0; metric < own.size(); ++metric)
         {
-          params_.musicTelemetry->ambience.store(musicUpmixer_.LastSpectralAmbience());
-          params_.musicTelemetry->center.store(musicUpmixer_.LastSpectralCenter());
-          params_.musicTelemetry->spatialBins.store(musicUpmixer_.LastSpatialBinFraction());
-          params_.musicTelemetry->transient.store(musicUpmixer_.LastSpectralTransient());
-          params_.musicTelemetry->surroundAmount.store(musicUpmixer_.LastSurroundAmount());
-          params_.musicTelemetry->frontLock.store(musicUpmixer_.LastFrontLockConfidence());
-          params_.musicTelemetry->rearBudgetScale.store(musicUpmixer_.LastRearBudgetScale());
+          snapshot.ownership[metric] = own[metric];
+          snapshot.bandCenter[metric] = ctr[metric];
+        }
 
-          const auto& own = musicUpmixer_.LastBandOwnership();
-          const auto& ctr = musicUpmixer_.LastBandCenter();
-          for (size_t i = 0; i < own.size(); ++i)
-          {
-            params_.musicTelemetry->bandOwnership[i].store(own[i]);
-            params_.musicTelemetry->bandCenter[i].store(ctr[i]);
-          }
-
-          std::array<double, 6> channelEnergy{{0, 0, 0, 0, 0, 0}};
-          for (int frame = 0; frame < framesPerPacket_; ++frame)
-          {
-            const size_t base = static_cast<size_t>(frame) * 6;
-            for (size_t ch = 0; ch < channelEnergy.size(); ++ch)
-            {
-              const double sample = static_cast<double>(music51_[base + ch]);
-              channelEnergy[ch] += sample * sample;
-            }
-          }
-
-          const double rmsDenom = std::max(1, framesPerPacket_);
+        std::array<double, 6> channelEnergy{{0, 0, 0, 0, 0, 0}};
+        for (int frame = 0; frame < framesPerPacket_; ++frame)
+        {
+          const size_t base = static_cast<size_t>(frame) * 6;
           for (size_t ch = 0; ch < channelEnergy.size(); ++ch)
           {
-            params_.musicTelemetry->speakerRms[ch].store(
-                static_cast<float>(std::sqrt(channelEnergy[ch] / rmsDenom)));
+            const double sample = static_cast<double>(music51_[base + ch]);
+            channelEnergy[ch] += sample * sample;
           }
+        }
 
-          params_.musicTelemetry->sequence.fetch_add(1, std::memory_order_relaxed);
+        const double rmsDenom = std::max(1, framesPerPacket_);
+        for (size_t ch = 0; ch < channelEnergy.size(); ++ch)
+        {
+          snapshot.speakerRms[ch] =
+              static_cast<float>(std::sqrt(channelEnergy[ch] / rmsDenom));
+        }
+
+        if (params_.musicTelemetry)
+        {
+          params_.musicTelemetry->ambience.store(snapshot.ambience);
+          params_.musicTelemetry->center.store(snapshot.centerConfidence);
+          params_.musicTelemetry->spatialBins.store(snapshot.spatialBinFraction);
+          params_.musicTelemetry->transient.store(snapshot.transientConfidence);
+          params_.musicTelemetry->surroundAmount.store(snapshot.rearOpen);
+          params_.musicTelemetry->frontLock.store(snapshot.frontLockConfidence);
+          params_.musicTelemetry->rearBudgetScale.store(snapshot.rearBudgetScale);
+
+          for (size_t metric = 0; metric < snapshot.ownership.size(); ++metric)
+          {
+            params_.musicTelemetry->bandOwnership[metric].store(snapshot.ownership[metric]);
+            params_.musicTelemetry->bandCenter[metric].store(snapshot.bandCenter[metric]);
+          }
+          for (size_t ch = 0; ch < snapshot.speakerRms.size(); ++ch)
+            params_.musicTelemetry->speakerRms[ch].store(snapshot.speakerRms[ch]);
+
+          params_.musicTelemetry->sequence.store(
+              snapshot.sequence, std::memory_order_relaxed);
+        }
+
+        // These are the exact pre-OHL stereo samples and exact post-OHL 5.1 samples.
+        // PushPacket performs no allocation or filesystem I/O.
+        if (params_.musicCaptureLogger && params_.musicCaptureLogger->WantsPacket())
+        {
+          params_.musicCaptureLogger->PushPacket(
+              musicStereo_.data(),
+              music51_.data(),
+              static_cast<size_t>(framesPerPacket_),
+              snapshot);
         }
 
         encodeIn = reinterpret_cast<const uint8_t*>(music51_.data());
@@ -661,6 +692,7 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
     }
     std::memcpy(out + outOff, burst_.data(), kBurstBytes);
     outOff += kBurstBytes;
+    engineFrameCounter_ += static_cast<uint64_t>(framesPerPacket_);
   }
 
   const size_t totalBytes = static_cast<size_t>(bufferFrames_) * kCarrierBytesPerFrame;
@@ -677,6 +709,8 @@ bool WasapiPassthrough::Start()
   minAvail_ = 0xFFFFFFFFu;
   activeIsSurround_ = false;
   quietPackets_ = 0;
+  engineFrameCounter_ = 0;
+  musicPacketSequence_ = 0;
   if (params_.autoLayout && params_.musicStereo)
     musicUpmixer_.Reset();
 
