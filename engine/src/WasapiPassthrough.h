@@ -18,6 +18,7 @@
 #include "RingBuffer.h"
 #include "SpdifEncoder.h"
 #include "OhlMusicUpmixer.h"
+#include "MusicTelemetry.h"
 #include "WasapiCapture.h" // CaptureFormat
 
 #include <audioclient.h>
@@ -58,6 +59,13 @@ public:
     double musicDiffuseThreshold = 0.10;
     double musicSpectralIntelligence = 0.90;
     double musicSpatialBinThreshold = 0.30;
+    double musicPerBinRouting = 0.55;
+    double musicSpectralAcquireMs = 65.0;
+    double musicSpectralReleaseMs = 520.0;
+    double musicDimension = 0.0;
+    double musicCenterWidth = 1.0;
+    std::array<double, 4> musicSpectralSteering{{0.18, 0.55, 0.90, 1.10}};
+    std::array<double, 4> musicSpectralFrontLock{{0.30, 1.00, 0.82, 0.25}};
     double musicFrontLock = 0.88;
     double musicRearBudget = 0.22;
     double musicDirectReject = 0.78;
@@ -71,6 +79,7 @@ public:
     double musicRearLeftTrim = 1.0;
     double musicRearRightTrim = 1.0;
     std::array<double, 6> musicDistanceInches{{33.0, 33.0, 30.0, 33.0, 27.0, 33.0}};
+    MusicTelemetry* musicTelemetry = nullptr;
   };
 
   WasapiPassthrough() = default;
