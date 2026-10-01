@@ -47,6 +47,29 @@ float SmoothValue(float current, float target, float attack, float release)
   return current + a * (target - current);
 }
 
+const wchar_t* SceneInterpretation(const OhlAnalyzerMetrics& m)
+{
+  if (!m.online)
+    return L"engine offline";
+
+  if (m.transient > 0.72f && m.rearOpen < 0.24f)
+    return L"direct transient  \u2022  front protected";
+
+  if (m.center > 0.68f && m.frontLock > 0.58f)
+    return L"centered lead  \u2022  front anchored";
+
+  if (m.ownership[3] > 0.26f && m.ambience > 0.28f)
+    return L"air / room field  \u2022  surrounds breathing";
+
+  if (m.rearOpen > 0.42f || m.spatialBins > 0.42f)
+    return L"wide spatial scene  \u2022  rear field active";
+
+  if (m.spatialBins < 0.08f && m.ambience < 0.10f)
+    return L"front-heavy mix  \u2022  surrounds restrained";
+
+  return L"subtle spatial cues  \u2022  light rear support";
+}
+
 void PushHistory(std::deque<float>& q, float v)
 {
   q.push_back(Clamp01(v));
@@ -262,6 +285,13 @@ LRESULT CALLBACK AnalyzerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       RECT title{16, 10, r.right - 16, 31};
       Text(mem, font, kText, L"LIVE SPATIAL ANALYZER", title,
            DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+      if (s && s->raw.online && static_cast<int>(r.right - r.left) >= 500)
+      {
+        RECT interpretation{205, 10, r.right - 40, 31};
+        Text(mem, font, kMuted, SceneInterpretation(s->smooth), interpretation,
+             DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+      }
 
       const bool online = s && s->raw.online;
       const COLORREF dotColor = online ? kGreen : kRose;
