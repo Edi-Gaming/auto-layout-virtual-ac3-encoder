@@ -42,7 +42,7 @@ jobs:
         run: ./scripts/fetch-ffmpeg.ps1
 
       - name: Configure (CMake, VS 2022 x64)
-        run: cmake -S engine -B engine/build -G "Visual Studio 17 2022" -A x64
+        run: cmake -S engine -B engine/build -G "Visual Studio 17 2022" -A x64 -DVAC3_BUILD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
 
       - name: Build (Release)
         run: cmake --build engine/build --config Release

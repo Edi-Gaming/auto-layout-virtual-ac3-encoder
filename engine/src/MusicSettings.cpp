@@ -105,6 +105,8 @@ enum ControlId
   kStageViz,
   kMeterSummary,
   kMeterBands,
+  kCapture,
+  kCaptureState,
   kReload,
   kApply,
   kStatus
@@ -117,6 +119,7 @@ HFONT gUiFont = nullptr;
 HFONT gSmallFont = nullptr;
 
 constexpr UINT kMetricsMessage = WM_APP + 77;
+constexpr UINT kCaptureMessage = WM_APP + 78;
 constexpr int kMetricsIntervalMs = 20;
 std::atomic_bool gMetricsStop{false};
 std::thread gMetricsThread;
@@ -343,6 +346,82 @@ std::array<double, 6> MetricSix(const std::map<std::string, std::string>& fields
   return out;
 }
 
+std::wstring WidenCaptureUtf8(const std::string& text)
+{
+  if (text.empty()) return {};
+  const int count = MultiByteToWideChar(
+      CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+  if (count <= 0) return {};
+  std::wstring out(static_cast<size_t>(count), L'\0');
+  MultiByteToWideChar(
+      CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), count);
+  return out;
+}
+
+void UpdateCaptureUi(HWND hwnd, const std::string& response)
+{
+  const auto fields = ParseCompactFields(response);
+  auto stateIt = fields.find("capture_state");
+  const std::string state =
+      stateIt == fields.end() ? "offline" : stateIt->second;
+
+  const bool active =
+      state == "armed" || state == "recording" ||
+      state == "complete" || state == "saving";
+  SetWindowTextW(
+      GetDlgItem(hwnd, kCapture),
+      active ? L"CANCEL" : L"CAPTURE 15s");
+
+  std::wstring label;
+  if (state == "armed")
+  {
+    label = L"ARMED — waiting for OHL stereo";
+  }
+  else if (state == "recording")
+  {
+    const double elapsed = MetricDouble(fields, "seconds");
+    const double requested = MetricDouble(fields, "requested_seconds", 15.0);
+    std::wostringstream out;
+    out << L"RECORDING "
+        << std::fixed << std::setprecision(1)
+        << elapsed << L" / " << requested << L" s";
+    label = out.str();
+  }
+  else if (state == "complete" || state == "saving")
+  {
+    label = L"SAVING CAPTURE...";
+  }
+  else if (state == "saved")
+  {
+    std::string path;
+    auto pathIt = fields.find("path");
+    if (pathIt != fields.end()) path = pathIt->second;
+    const size_t slash = path.find_last_of("\\/");
+    const std::string leaf =
+        slash == std::string::npos ? path : path.substr(slash + 1);
+    label = leaf.empty()
+        ? L"SAVED"
+        : L"SAVED — " + WidenCaptureUtf8(leaf);
+  }
+  else if (state == "cancelled")
+  {
+    label = L"CANCELLED";
+  }
+  else if (state == "error")
+  {
+    label = L"ERROR";
+    auto errorIt = fields.find("error");
+    if (errorIt != fields.end() && !errorIt->second.empty())
+      label += L" — " + WidenCaptureUtf8(errorIt->second);
+  }
+  else
+  {
+    label = L"READY";
+  }
+
+  SetWindowTextW(GetDlgItem(hwnd, kCaptureState), label.c_str());
+}
+
 OhlAnalyzerMetrics ParseMetricsResponse(const std::string& response)
 {
   OhlAnalyzerMetrics m;
@@ -383,6 +462,8 @@ void StopMetricsWorker(HWND hwnd)
   MSG pending{};
   while (PeekMessageW(&pending, hwnd, kMetricsMessage, kMetricsMessage, PM_REMOVE))
     delete reinterpret_cast<OhlAnalyzerMetrics*>(pending.lParam);
+  while (PeekMessageW(&pending, hwnd, kCaptureMessage, kCaptureMessage, PM_REMOVE))
+    delete reinterpret_cast<std::string*>(pending.lParam);
 }
 
 void StartMetricsWorker(HWND hwnd)
@@ -397,6 +478,7 @@ void StartMetricsWorker(HWND hwnd)
     uint64_t lastPostedSequence = (std::numeric_limits<uint64_t>::max)();
     int consecutiveMisses = 0;
     bool offlinePosted = false;
+    int capturePollTicks = 0;
 
     while (!gMetricsStop.load())
     {
@@ -440,6 +522,25 @@ void StartMetricsWorker(HWND hwnd)
             break;
           }
           offlinePosted = true;
+        }
+      }
+
+      if (++capturePollTicks >= 10)
+      {
+        capturePollTicks = 0;
+        std::string captureResponse;
+        if (!SendModeCommand("capture status", captureResponse, 60))
+          captureResponse = "capture_state=offline";
+
+        auto* captureStatus = new std::string(captureResponse);
+        if (!PostMessageW(
+                hwnd,
+                kCaptureMessage,
+                0,
+                reinterpret_cast<LPARAM>(captureStatus)))
+        {
+          delete captureStatus;
+          break;
         }
       }
 
@@ -1088,10 +1189,26 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       mix(Button(hwnd, kRecallA, L"A  \u25B6", 205, 665, 70, 32));
       mix(Button(hwnd, kStoreB, L"STORE B", 282, 665, 90, 32));
       mix(Button(hwnd, kRecallB, L"B  \u25B6", 379, 665, 72, 32));
+      mix(Button(hwnd, kCapture, L"CAPTURE 15s", 112, 712, 125, 32));
+      HWND captureState = CreateWindowW(
+          kOhlCardLabelClass,
+          L"READY",
+          WS_CHILD | WS_VISIBLE,
+          250, 718, 225, 22,
+          hwnd,
+          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCaptureState)),
+          nullptr,
+          nullptr);
+      SendMessageW(
+          captureState,
+          WM_SETFONT,
+          reinterpret_cast<WPARAM>(gSmallFont),
+          TRUE);
+      mix(captureState);
       mix(Label(
           hwnd,
-          L"Presets load controls; A/B recall applies immediately so the same passage can be compared by ear.",
-          36, 718, 445, 42, true));
+          L"A/B recall is live. Capture writes exact stereo in, rendered 5.1 out and packet telemetry.",
+          36, 751, 445, 20, true));
 
       HWND analyzer = mix(CreateOhlAnalyzerVisual(hwnd, kAnalyzerViz, 540, 477, 610, 303));
       SendMessageW(analyzer, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
@@ -1285,6 +1402,32 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
       }
 
+      if (id == kCapture)
+      {
+        std::string current;
+        const bool online = SendModeCommand("capture status", current, 300);
+        const auto fields = online
+            ? ParseCompactFields(current)
+            : std::map<std::string, std::string>{};
+        const auto stateIt = fields.find("capture_state");
+        const std::string captureState =
+            stateIt == fields.end() ? std::string() : stateIt->second;
+        const bool active =
+            captureState == "armed" || captureState == "recording" ||
+            captureState == "complete" || captureState == "saving";
+
+        std::string response;
+        if (!SendModeCommand(
+                active ? "capture cancel" : "capture start 15",
+                response,
+                1000))
+        {
+          response = "capture_state=error;error=engine_offline";
+        }
+        UpdateCaptureUi(hwnd, response);
+        return 0;
+      }
+
       if (id == kApply)
       {
         Apply(hwnd, *state);
@@ -1350,6 +1493,15 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
       }
       break;
+    }
+
+    case kCaptureMessage:
+    {
+      std::unique_ptr<std::string> captureStatus(
+          reinterpret_cast<std::string*>(lp));
+      if (captureStatus)
+        UpdateCaptureUi(hwnd, *captureStatus);
+      return 0;
     }
 
     case kMetricsMessage:

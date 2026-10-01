@@ -19,6 +19,7 @@
 #include "SpdifEncoder.h"
 #include "OhlMusicUpmixer.h"
 #include "MusicTelemetry.h"
+#include "MusicCaptureLogger.h"
 #include "WasapiCapture.h" // CaptureFormat
 
 #include <audioclient.h>
@@ -80,6 +81,7 @@ public:
     double musicRearRightTrim = 1.0;
     std::array<double, 6> musicDistanceInches{{33.0, 33.0, 30.0, 33.0, 27.0, 33.0}};
     MusicTelemetry* musicTelemetry = nullptr;
+    MusicCaptureLogger* musicCaptureLogger = nullptr;
   };
 
   WasapiPassthrough() = default;
@@ -95,6 +97,12 @@ public:
   bool Init(IMMDevice* dev, RingBuffer* ring, const CaptureFormat& capFmt, const Params& p);
   bool Start();
   void Stop();
+  int MusicProcessingLatencySamples() const
+  {
+    return (params_.autoLayout && params_.musicStereo)
+        ? musicUpmixer_.ProcessingLatencySamples()
+        : 0;
+  }
 
 private:
   bool InitExclusive(int rate);
@@ -151,6 +159,8 @@ private:
   // drift tracking (consumer thread only)
   uint32_t cycle_ = 0;
   uint32_t minAvail_ = 0xFFFFFFFFu;
+  uint64_t engineFrameCounter_ = 0;
+  uint64_t musicPacketSequence_ = 0;
 
   std::vector<uint8_t> staging_; // one packet of capture frames
   std::vector<uint8_t> silence_; // same, zeroed

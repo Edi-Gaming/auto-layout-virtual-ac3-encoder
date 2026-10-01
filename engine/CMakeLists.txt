@@ -51,6 +51,8 @@ add_library(ac3core STATIC
   src/OhlSpatialAnalyzer.h
   src/OhlSpectralRouter.cpp
   src/OhlSpectralRouter.h
+  src/MusicCaptureLogger.cpp
+  src/MusicCaptureLogger.h
   src/RingBuffer.h
 )
 target_include_directories(ac3core PUBLIC src)
@@ -109,6 +111,7 @@ endif()
 # Version string (override from CI: -DVAC3_VERSION=0.1.0). Use a generated header so the
 # quoting survives the VS generator (embedded-quote compile defs don't).
 set(VAC3_VERSION "0.0.0-dev" CACHE STRING "Engine version string")
+set(VAC3_BUILD_SHA "unknown" CACHE STRING "Git commit SHA embedded in debug captures")
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/Version.h.in"
                "${CMAKE_CURRENT_BINARY_DIR}/generated/Version.h" @ONLY)
 target_include_directories(engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -124,6 +127,8 @@ add_executable(ohl_ui WIN32
   src/BrandIcon.h
   src/ModeControl.cpp
   src/ModeControl.h
+  src/MusicCaptureLogger.cpp
+  src/MusicCaptureLogger.h
   src/ModernControls.cpp
   src/ModernControls.h
   src/MacroKnob.cpp
@@ -153,6 +158,7 @@ add_executable(unit_tests
   test/test_ohl_music.cpp
   test/test_ohl_spatial_analyzer.cpp
   test/test_ohl_spectral_router.cpp
+  test/test_music_capture_logger.cpp
 )
 target_include_directories(unit_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/doctest"
