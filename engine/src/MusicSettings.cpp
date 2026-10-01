@@ -1,6 +1,8 @@
 #include "MusicSettings.h"
 #include "BrandIcon.h"
 #include "ModeControl.h"
+#include "ModernControls.h"
+#include "AnalyzerVisual.h"
 
 #include <commctrl.h>
 #include <windows.h>
@@ -90,6 +92,7 @@ enum ControlId
   kRecallA,
   kStoreB,
   kRecallB,
+  kAnalyzerViz,
   kMeterSummary,
   kMeterBands,
   kReload,
@@ -98,11 +101,13 @@ enum ControlId
 };
 
 HBRUSH gBg = nullptr;
+HBRUSH gEditBg = nullptr;
 HFONT gTitleFont = nullptr;
 HFONT gUiFont = nullptr;
 HFONT gSmallFont = nullptr;
 
 constexpr UINT_PTR kMetricsTimer = 17;
+constexpr UINT kMetricsIntervalMs = 33;
 bool gHaveSnapshotA = false;
 bool gHaveSnapshotB = false;
 
@@ -305,45 +310,41 @@ std::array<double, 4> MetricQuad(const std::map<std::string, std::string>& field
 
 void RefreshMetrics(HWND hwnd)
 {
+  OhlAnalyzerMetrics m;
   std::string response;
-  if (!SendModeCommand("metrics", response, 120))
+  if (!SendModeCommand("metrics", response, 18))
   {
-    SetDlgItemTextW(hwnd, kMeterSummary, L"Engine offline / metrics unavailable.");
-    SetDlgItemTextW(hwnd, kMeterBands, L"OWN  --  --  --  --\r\nCTR  --  --  --  --");
+    m.online = false;
+    UpdateOhlAnalyzerVisual(GetDlgItem(hwnd, kAnalyzerViz), m);
     return;
   }
 
   const auto f = ParseCompactFields(response);
   if (f.empty())
+  {
+    m.online = false;
+    UpdateOhlAnalyzerVisual(GetDlgItem(hwnd, kAnalyzerViz), m);
     return;
+  }
 
-  const double amb = MetricDouble(f, "amb");
-  const double ctr = MetricDouble(f, "center");
-  const double bins = MetricDouble(f, "bins");
-  const double trans = MetricDouble(f, "trans");
-  const double rear = MetricDouble(f, "rear");
-  const double lock = MetricDouble(f, "lock");
-  const double budget = MetricDouble(f, "budget", 1.0);
+  m.online = true;
+  m.ambience = static_cast<float>(MetricDouble(f, "amb"));
+  m.center = static_cast<float>(MetricDouble(f, "center"));
+  m.spatialBins = static_cast<float>(MetricDouble(f, "bins"));
+  m.transient = static_cast<float>(MetricDouble(f, "trans"));
+  m.rearOpen = static_cast<float>(MetricDouble(f, "rear"));
+  m.frontLock = static_cast<float>(MetricDouble(f, "lock"));
+  m.budgetScale = static_cast<float>(MetricDouble(f, "budget", 1.0));
+
   const auto own = MetricQuad(f, "own");
-  const auto bandCenter = MetricQuad(f, "bandcenter");
+  const auto ctr = MetricQuad(f, "bandcenter");
+  for (size_t i = 0; i < 4; ++i)
+  {
+    m.ownership[i] = static_cast<float>(own[i]);
+    m.bandCenter[i] = static_cast<float>(ctr[i]);
+  }
 
-  wchar_t summary[512] = {};
-  swprintf_s(summary, L"Ambience %3.0f%%   Center %3.0f%%\r\n"
-                      L"Spatial bins %3.0f%%   Transient %3.0f%%\r\n"
-                      L"Rear open %3.0f%%   Front lock %3.0f%%\r\n"
-                      L"Budget scale %3.0f%%",
-             100.0 * amb, 100.0 * ctr, 100.0 * bins, 100.0 * trans,
-             100.0 * rear, 100.0 * lock, 100.0 * budget);
-  SetDlgItemTextW(hwnd, kMeterSummary, summary);
-
-  wchar_t bands[512] = {};
-  swprintf_s(bands, L"          LOW   BODY   PRES    AIR\r\n"
-                    L"OWN      %3.0f    %3.0f    %3.0f    %3.0f\r\n"
-                    L"CENTER   %3.0f    %3.0f    %3.0f    %3.0f",
-             100.0 * own[0], 100.0 * own[1], 100.0 * own[2], 100.0 * own[3],
-             100.0 * bandCenter[0], 100.0 * bandCenter[1],
-             100.0 * bandCenter[2], 100.0 * bandCenter[3]);
-  SetDlgItemTextW(hwnd, kMeterBands, bands);
+  UpdateOhlAnalyzerVisual(GetDlgItem(hwnd, kAnalyzerViz), m);
 }
 
 bool WriteValues(const std::string& path, const std::map<std::string, std::string>& values)
@@ -418,7 +419,7 @@ HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool us
 
 HWND Group(HWND parent, const wchar_t* text, int x, int y, int w, int h)
 {
-  HWND c = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_GROUPBOX,
+  HWND c = CreateWindowW(kOhlGroupClass, text, WS_CHILD | WS_VISIBLE,
                          x, y, w, h, parent, nullptr, nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
   return c;
@@ -426,8 +427,8 @@ HWND Group(HWND parent, const wchar_t* text, int x, int y, int w, int h)
 
 HWND Edit(HWND parent, int id, int x, int y, int w)
 {
-  HWND c = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-                           WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+  HWND c = CreateWindowExW(0, L"EDIT", L"",
+                           WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
                            x, y, w, 24, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                            nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
@@ -436,7 +437,7 @@ HWND Edit(HWND parent, int id, int x, int y, int w)
 
 HWND Slider(HWND parent, int id, int x, int y, int w, int maxValue, int pos)
 {
-  HWND c = CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_HORZ,
+  HWND c = CreateWindowW(kOhlSliderClass, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                          x, y, w, 32, parent,
                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
   SendMessageW(c, TBM_SETRANGE, TRUE, MAKELPARAM(0, maxValue));
@@ -455,7 +456,7 @@ HWND ValueLabel(HWND parent, int id, int x, int y, int w = 62)
 
 HWND Button(HWND parent, int id, const wchar_t* text, int x, int y, int w, int h = 30)
 {
-  HWND c = CreateWindowW(L"BUTTON", text, WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+  HWND c = CreateWindowW(kOhlButtonClass, text, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                          x, y, w, h, parent,
                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
@@ -858,7 +859,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.11 adaptive matrix lab — true per-bin routing on the clean v0.10 front stage.",
+      Label(hwnd, L"v0.11 adaptive matrix lab \u2014 true per-bin routing on the clean v0.10 front stage.",
             21, 48, 1040, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
@@ -940,13 +941,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
       Label(hwnd, L"Center band", 30, 692, 88, 22);
       Edit(hwnd, kCenterHp, 120, 688, 72);
-      Label(hwnd, L"—", 197, 692, 15, 22);
+      Label(hwnd, L"\u2014", 197, 692, 15, 22);
       Edit(hwnd, kCenterLp, 215, 688, 76);
       Label(hwnd, L"Hz", 295, 692, 25, 22, true);
 
       Label(hwnd, L"Rear band", 348, 692, 72, 22);
       Edit(hwnd, kRearHp, 423, 688, 70);
-      Label(hwnd, L"—", 497, 692, 15, 22);
+      Label(hwnd, L"\u2014", 497, 692, 15, 22);
       Edit(hwnd, kRearLp, 515, 688, 76);
       Label(hwnd, L"Hz", 595, 692, 25, 22, true);
 
@@ -975,75 +976,61 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                   nullptr, nullptr);
       SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
-      // ---- v0.11 right-hand lab pane ---------------------------------------------------------
-      Group(hwnd, L"Live analyzer", 752, 108, 342, 220);
-      HWND meterSummary = CreateWindowW(
-          L"STATIC", L"Waiting for live metrics...",
-          WS_CHILD | WS_VISIBLE | SS_LEFT,
-          770, 137, 300, 82, hwnd,
-          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMeterSummary)), nullptr, nullptr);
-      SendMessageW(meterSummary, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+      // ---- v0.11.1 right-hand lab pane -------------------------------------------------------
+      HWND analyzer = CreateOhlAnalyzerVisual(hwnd, kAnalyzerViz, 752, 108, 342, 388);
+      SendMessageW(analyzer, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
 
-      HWND meterBands = CreateWindowW(
-          L"STATIC", L"OWN  --  --  --  --\r\nCTR  --  --  --  --",
-          WS_CHILD | WS_VISIBLE | SS_LEFT,
-          770, 226, 300, 78, hwnd,
-          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMeterBands)), nullptr, nullptr);
-      SendMessageW(meterBands, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
+      Group(hwnd, L"Per-bin router / matrix", 752, 508, 342, 282);
 
-      Group(hwnd, L"Per-bin router / matrix", 752, 338, 342, 390);
+      Label(hwnd, L"Per-bin routing", 770, 535, 118, 22);
+      Slider(hwnd, kPerBinRouting, 888, 528, 132, 100, PercentToSlider(state->perBinRouting));
+      ValueLabel(hwnd, kPerBinRoutingValue, 1022, 535, 55);
 
-      Label(hwnd, L"Per-bin routing", 770, 367, 118, 22);
-      Slider(hwnd, kPerBinRouting, 888, 360, 132, 100, PercentToSlider(state->perBinRouting));
-      ValueLabel(hwnd, kPerBinRoutingValue, 1022, 367, 55);
-
-      Label(hwnd, L"Dimension", 770, 407, 118, 22);
-      Slider(hwnd, kDimension, 888, 400, 132, 200,
+      Label(hwnd, L"Dimension", 770, 570, 118, 22);
+      Slider(hwnd, kDimension, 888, 563, 132, 200,
              static_cast<int>(std::lround((state->dimension + 1.0) * 100.0)));
-      ValueLabel(hwnd, kDimensionValue, 1022, 407, 55);
+      ValueLabel(hwnd, kDimensionValue, 1022, 570, 55);
 
-      Label(hwnd, L"Center Width", 770, 447, 118, 22);
-      Slider(hwnd, kCenterWidth, 888, 440, 132, 100, PercentToSlider(state->centerWidth));
-      ValueLabel(hwnd, kCenterWidthValue, 1022, 447, 55);
+      Label(hwnd, L"Center Width", 770, 605, 118, 22);
+      Slider(hwnd, kCenterWidth, 888, 598, 132, 100, PercentToSlider(state->centerWidth));
+      ValueLabel(hwnd, kCenterWidthValue, 1022, 605, 55);
 
-      Label(hwnd, L"Ownership acquire", 770, 489, 118, 22, true);
-      Edit(hwnd, kSpectralAcquire, 888, 485, 58);
-      Label(hwnd, L"ms", 949, 489, 24, 22, true);
-      Label(hwnd, L"release", 984, 489, 52, 22, true);
-      Edit(hwnd, kSpectralRelease, 1035, 485, 45);
+      Label(hwnd, L"Ownership", 770, 642, 72, 22, true);
+      Edit(hwnd, kSpectralAcquire, 842, 638, 48);
+      Label(hwnd, L"ms in", 894, 642, 34, 22, true);
+      Edit(hwnd, kSpectralRelease, 930, 638, 52);
+      Label(hwnd, L"ms out", 986, 642, 46, 22, true);
 
-      Label(hwnd, L"Band", 770, 530, 46, 20, true);
-      Label(hwnd, L"LOW", 826, 530, 46, 20, true);
-      Label(hwnd, L"BODY", 884, 530, 48, 20, true);
-      Label(hwnd, L"PRES", 944, 530, 48, 20, true);
-      Label(hwnd, L"AIR", 1004, 530, 46, 20, true);
+      Label(hwnd, L"Band", 770, 678, 46, 20, true);
+      Label(hwnd, L"LOW", 826, 678, 46, 20, true);
+      Label(hwnd, L"BODY", 884, 678, 48, 20, true);
+      Label(hwnd, L"PRES", 944, 678, 48, 20, true);
+      Label(hwnd, L"AIR", 1004, 678, 46, 20, true);
 
-      Label(hwnd, L"Steer", 770, 557, 46, 22, true);
-      Edit(hwnd, kSteerLow, 820, 553, 48);
-      Edit(hwnd, kSteerBody, 880, 553, 48);
-      Edit(hwnd, kSteerPresence, 940, 553, 48);
-      Edit(hwnd, kSteerAir, 1000, 553, 48);
+      Label(hwnd, L"Steer", 770, 705, 46, 22, true);
+      Edit(hwnd, kSteerLow, 820, 701, 48);
+      Edit(hwnd, kSteerBody, 880, 701, 48);
+      Edit(hwnd, kSteerPresence, 940, 701, 48);
+      Edit(hwnd, kSteerAir, 1000, 701, 48);
 
-      Label(hwnd, L"F-lock", 770, 593, 46, 22, true);
-      Edit(hwnd, kLockLow, 820, 589, 48);
-      Edit(hwnd, kLockBody, 880, 589, 48);
-      Edit(hwnd, kLockPresence, 940, 589, 48);
-      Edit(hwnd, kLockAir, 1000, 589, 48);
+      Label(hwnd, L"F-lock", 770, 741, 46, 22, true);
+      Edit(hwnd, kLockLow, 820, 737, 48);
+      Edit(hwnd, kLockBody, 880, 737, 48);
+      Edit(hwnd, kLockPresence, 940, 737, 48);
+      Edit(hwnd, kLockAir, 1000, 737, 48);
 
-      Label(hwnd, L"Low <250 Hz  |  Body 250-2k  |  Presence 2-6k  |  Air >6k",
-            770, 628, 305, 38, true);
-      Label(hwnd, L"Dimension: -100 front / +100 rear. Center Width: 100 = v0.10 phantom center.",
-            770, 674, 300, 40, true);
+      Label(hwnd, L"<250 Hz       250-2k        2-6k          >6k",
+            820, 765, 250, 18, true);
 
-      Group(hwnd, L"A / B audition", 752, 740, 342, 112);
-      Button(hwnd, kStoreA, L"STORE A", 770, 772, 72, 30);
-      Button(hwnd, kRecallA, L"A  ▶", 848, 772, 58, 30);
-      Button(hwnd, kStoreB, L"STORE B", 922, 772, 72, 30);
-      Button(hwnd, kRecallB, L"B  ▶", 1000, 772, 58, 30);
-      Label(hwnd, L"Recall immediately saves + applies that snapshot live.", 770, 811, 300, 24, true);
+      Group(hwnd, L"A / B audition", 752, 802, 342, 88);
+      Button(hwnd, kStoreA, L"STORE A", 770, 828, 72, 30);
+      Button(hwnd, kRecallA, L"A  \u25B6", 848, 828, 58, 30);
+      Button(hwnd, kStoreB, L"STORE B", 922, 828, 72, 30);
+      Button(hwnd, kRecallB, L"B  \u25B6", 1000, 828, 58, 30);
+      Label(hwnd, L"Recall applies immediately for ear A/B.", 770, 862, 300, 18, true);
 
       PushStateToControls(hwnd, *state);
-      SetTimer(hwnd, kMetricsTimer, 300, nullptr);
+      SetTimer(hwnd, kMetricsTimer, kMetricsIntervalMs, nullptr);
       RefreshMetrics(hwnd);
       return 0;
     }
@@ -1140,11 +1127,20 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       return reinterpret_cast<LRESULT>(gBg);
     }
 
+    case WM_CTLCOLOREDIT:
+    {
+      HDC dc = reinterpret_cast<HDC>(wp);
+      SetBkColor(dc, RGB(24, 30, 40));
+      SetTextColor(dc, RGB(238, 243, 251));
+      return reinterpret_cast<LRESULT>(gEditBg ? gEditBg : gBg);
+    }
+
     case WM_DESTROY:
       KillTimer(hwnd, kMetricsTimer);
       if (gTitleFont) { DeleteObject(gTitleFont); gTitleFont = nullptr; }
       if (gUiFont) { DeleteObject(gUiFont); gUiFont = nullptr; }
       if (gSmallFont) { DeleteObject(gSmallFont); gSmallFont = nullptr; }
+      if (gEditBg) { DeleteObject(gEditBg); gEditBg = nullptr; }
       if (gBg) { DeleteObject(gBg); gBg = nullptr; }
       PostQuitMessage(0);
       return 0;
@@ -1167,7 +1163,11 @@ int RunMusicSettingsGui(const std::string& configPath)
   LoadState(state);
 
   HINSTANCE instance = GetModuleHandleW(nullptr);
+  if (!RegisterOhlModernControls(instance) || !RegisterOhlAnalyzerVisual(instance))
+    return 1;
+
   gBg = CreateSolidBrush(RGB(15, 17, 23));
+  gEditBg = CreateSolidBrush(RGB(24, 30, 40));
 
   WNDCLASSEXW wc = {};
   wc.cbSize = sizeof(wc);
