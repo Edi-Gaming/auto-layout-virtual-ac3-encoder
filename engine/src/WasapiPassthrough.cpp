@@ -626,6 +626,26 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
             params_.musicTelemetry->bandOwnership[i].store(own[i]);
             params_.musicTelemetry->bandCenter[i].store(ctr[i]);
           }
+
+          std::array<double, 6> channelEnergy{{0, 0, 0, 0, 0, 0}};
+          for (int frame = 0; frame < framesPerPacket_; ++frame)
+          {
+            const size_t base = static_cast<size_t>(frame) * 6;
+            for (size_t ch = 0; ch < channelEnergy.size(); ++ch)
+            {
+              const double sample = static_cast<double>(music51_[base + ch]);
+              channelEnergy[ch] += sample * sample;
+            }
+          }
+
+          const double rmsDenom = std::max(1, framesPerPacket_);
+          for (size_t ch = 0; ch < channelEnergy.size(); ++ch)
+          {
+            params_.musicTelemetry->speakerRms[ch].store(
+                static_cast<float>(std::sqrt(channelEnergy[ch] / rmsDenom)));
+          }
+
+          params_.musicTelemetry->sequence.fetch_add(1, std::memory_order_relaxed);
         }
 
         encodeIn = reinterpret_cast<const uint8_t*>(music51_.data());
