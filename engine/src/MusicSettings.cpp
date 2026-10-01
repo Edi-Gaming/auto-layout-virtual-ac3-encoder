@@ -604,7 +604,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.8 dual-layer ambience — audible rear space with a hard no-rear-mains ceiling.",
+      Label(hwnd, L"v0.9 linear M/S ambience — clean rear space, no nonlinear waveform carving.",
             21, 48, 710, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
