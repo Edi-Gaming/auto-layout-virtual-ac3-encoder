@@ -3,20 +3,25 @@
 #include "ModeControl.h"
 #include "ModernControls.h"
 #include "AnalyzerVisual.h"
+#include "StageVisual.h"
 
 #include <commctrl.h>
 #include <windows.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -93,6 +98,7 @@ enum ControlId
   kStoreB,
   kRecallB,
   kAnalyzerViz,
+  kStageViz,
   kMeterSummary,
   kMeterBands,
   kReload,
@@ -106,8 +112,11 @@ HFONT gTitleFont = nullptr;
 HFONT gUiFont = nullptr;
 HFONT gSmallFont = nullptr;
 
-constexpr UINT_PTR kMetricsTimer = 17;
-constexpr UINT kMetricsIntervalMs = 33;
+constexpr UINT kMetricsMessage = WM_APP + 77;
+constexpr int kMetricsIntervalMs = 33;
+std::atomic_bool gMetricsStop{false};
+std::thread gMetricsThread;
+OhlAnalyzerMetrics gLastUiMetrics{};
 bool gHaveSnapshotA = false;
 bool gHaveSnapshotB = false;
 
@@ -308,24 +317,12 @@ std::array<double, 4> MetricQuad(const std::map<std::string, std::string>& field
   return out;
 }
 
-void RefreshMetrics(HWND hwnd)
+OhlAnalyzerMetrics ParseMetricsResponse(const std::string& response)
 {
   OhlAnalyzerMetrics m;
-  std::string response;
-  if (!SendModeCommand("metrics", response, 18))
-  {
-    m.online = false;
-    UpdateOhlAnalyzerVisual(GetDlgItem(hwnd, kAnalyzerViz), m);
-    return;
-  }
-
   const auto f = ParseCompactFields(response);
   if (f.empty())
-  {
-    m.online = false;
-    UpdateOhlAnalyzerVisual(GetDlgItem(hwnd, kAnalyzerViz), m);
-    return;
-  }
+    return m;
 
   m.online = true;
   m.ambience = static_cast<float>(MetricDouble(f, "amb"));
@@ -343,8 +340,48 @@ void RefreshMetrics(HWND hwnd)
     m.ownership[i] = static_cast<float>(own[i]);
     m.bandCenter[i] = static_cast<float>(ctr[i]);
   }
+  return m;
+}
 
-  UpdateOhlAnalyzerVisual(GetDlgItem(hwnd, kAnalyzerViz), m);
+void StopMetricsWorker(HWND hwnd)
+{
+  gMetricsStop.store(true);
+  if (gMetricsThread.joinable())
+    gMetricsThread.join();
+
+  MSG pending{};
+  while (PeekMessageW(&pending, hwnd, kMetricsMessage, kMetricsMessage, PM_REMOVE))
+    delete reinterpret_cast<OhlAnalyzerMetrics*>(pending.lParam);
+}
+
+void StartMetricsWorker(HWND hwnd)
+{
+  StopMetricsWorker(hwnd);
+  gMetricsStop.store(false);
+
+  gMetricsThread = std::thread([hwnd]()
+  {
+    auto next = std::chrono::steady_clock::now();
+    while (!gMetricsStop.load())
+    {
+      auto* metrics = new OhlAnalyzerMetrics();
+      std::string response;
+      if (SendModeCommand("metrics", response, 15))
+        *metrics = ParseMetricsResponse(response);
+
+      if (!PostMessageW(hwnd, kMetricsMessage, 0, reinterpret_cast<LPARAM>(metrics)))
+      {
+        delete metrics;
+        break;
+      }
+
+      next += std::chrono::milliseconds(kMetricsIntervalMs);
+      const auto now = std::chrono::steady_clock::now();
+      if (next < now)
+        next = now;
+      std::this_thread::sleep_until(next);
+    }
+  });
 }
 
 bool WriteValues(const std::string& path, const std::map<std::string, std::string>& values)
@@ -490,20 +527,18 @@ void UpdateSliderLabels(HWND hwnd)
   pct(kAmbience, kAmbienceValue);
   pct(kWidth, kWidthValue);
   pct(kSpectralIntelligence, kSpectralIntelligenceValue);
-  pct(kPerBinRouting, kPerBinRoutingValue);
-  {
-    const int v = static_cast<int>(SendDlgItemMessageW(hwnd, kDimension, TBM_GETPOS, 0, 0));
-    const int signedValue = v - 100;
-    const std::wstring s = (signedValue > 0 ? L"+" : L"") + std::to_wstring(signedValue) + L"%";
-    SetDlgItemTextW(hwnd, kDimensionValue, s.c_str());
-  }
-  pct(kCenterWidth, kCenterWidthValue);
   pct(kFrontLock, kFrontLockValue);
-  pct(kReject, kRejectValue);
-  pct(kCenter, kCenterValue);
-  pct(kLowWeight, kLowWeightValue);
-  pct(kMidWeight, kMidWeightValue);
-  pct(kHighWeight, kHighWeightValue);
+}
+
+std::array<float, 5> StageDistances(const SettingsState& s)
+{
+  return {{
+      static_cast<float>(s.fl),
+      static_cast<float>(s.c),
+      static_cast<float>(s.fr),
+      static_cast<float>(s.sl),
+      static_cast<float>(s.sr),
+  }};
 }
 
 void PushStateToControls(HWND hwnd, const SettingsState& s)
@@ -514,19 +549,16 @@ void PushStateToControls(HWND hwnd, const SettingsState& s)
   SendDlgItemMessageW(hwnd, kWidth, TBM_SETPOS, TRUE, PercentToSlider(s.width));
   SendDlgItemMessageW(hwnd, kSpectralIntelligence, TBM_SETPOS, TRUE,
                       PercentToSlider(s.spectralIntelligence));
-  SendDlgItemMessageW(hwnd, kPerBinRouting, TBM_SETPOS, TRUE,
-                      PercentToSlider(s.perBinRouting));
-  SendDlgItemMessageW(hwnd, kDimension, TBM_SETPOS, TRUE,
-                      static_cast<LPARAM>(std::lround((s.dimension + 1.0) * 100.0)));
-  SendDlgItemMessageW(hwnd, kCenterWidth, TBM_SETPOS, TRUE,
-                      PercentToSlider(s.centerWidth));
   SendDlgItemMessageW(hwnd, kFrontLock, TBM_SETPOS, TRUE, PercentToSlider(s.frontLock));
-  SendDlgItemMessageW(hwnd, kReject, TBM_SETPOS, TRUE, PercentToSlider(s.directReject));
-  SendDlgItemMessageW(hwnd, kCenter, TBM_SETPOS, TRUE, PercentToSlider(s.center));
 
-  SendDlgItemMessageW(hwnd, kLowWeight, TBM_SETPOS, TRUE, PercentToSlider(s.lowWeight));
-  SendDlgItemMessageW(hwnd, kMidWeight, TBM_SETPOS, TRUE, PercentToSlider(s.midWeight));
-  SendDlgItemMessageW(hwnd, kHighWeight, TBM_SETPOS, TRUE, PercentToSlider(s.highWeight));
+  SetDoubleEdit(hwnd, kPerBinRouting, s.perBinRouting, 2);
+  SetDoubleEdit(hwnd, kDimension, s.dimension, 2);
+  SetDoubleEdit(hwnd, kCenterWidth, s.centerWidth, 2);
+  SetDoubleEdit(hwnd, kReject, s.directReject, 2);
+  SetDoubleEdit(hwnd, kCenter, s.center, 2);
+  SetDoubleEdit(hwnd, kLowWeight, s.lowWeight, 2);
+  SetDoubleEdit(hwnd, kMidWeight, s.midWeight, 2);
+  SetDoubleEdit(hwnd, kHighWeight, s.highWeight, 2);
 
   SetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs, 0);
   SetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs, 0);
@@ -560,6 +592,7 @@ void PushStateToControls(HWND hwnd, const SettingsState& s)
   SetDoubleEdit(hwnd, kSr, s.sr);
 
   UpdateSliderLabels(hwnd);
+  UpdateOhlStageVisual(GetDlgItem(hwnd, kStageViz), StageDistances(s), gLastUiMetrics);
 }
 
 void PullControlsToState(HWND hwnd, SettingsState& s)
@@ -572,11 +605,11 @@ void PullControlsToState(HWND hwnd, SettingsState& s)
   s.spectralIntelligence =
       static_cast<double>(SendDlgItemMessageW(hwnd, kSpectralIntelligence, TBM_GETPOS, 0, 0)) / 100.0;
   s.perBinRouting =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kPerBinRouting, TBM_GETPOS, 0, 0)) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kPerBinRouting, s.perBinRouting), 0.0, 1.0);
   s.dimension =
-      (static_cast<double>(SendDlgItemMessageW(hwnd, kDimension, TBM_GETPOS, 0, 0)) - 100.0) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kDimension, s.dimension), -1.0, 1.0);
   s.centerWidth =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kCenterWidth, TBM_GETPOS, 0, 0)) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kCenterWidth, s.centerWidth), 0.0, 1.0);
   s.spatialBinThreshold =
       std::clamp(GetDoubleEdit(hwnd, kSpatialBinThreshold, s.spatialBinThreshold), 0.0, 1.0);
   s.frontLock =
@@ -586,16 +619,16 @@ void PullControlsToState(HWND hwnd, SettingsState& s)
   s.rearBudget =
       std::clamp(GetDoubleEdit(hwnd, kRearBudget, s.rearBudget), 0.02, 1.0);
   s.directReject =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kReject, TBM_GETPOS, 0, 0)) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kReject, s.directReject), 0.0, 1.0);
   s.center =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kCenter, TBM_GETPOS, 0, 0)) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kCenter, s.center), 0.0, 1.0);
 
   s.lowWeight =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kLowWeight, TBM_GETPOS, 0, 0)) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kLowWeight, s.lowWeight), 0.0, 1.5);
   s.midWeight =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kMidWeight, TBM_GETPOS, 0, 0)) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kMidWeight, s.midWeight), 0.0, 1.5);
   s.highWeight =
-      static_cast<double>(SendDlgItemMessageW(hwnd, kHighWeight, TBM_GETPOS, 0, 0)) / 100.0;
+      std::clamp(GetDoubleEdit(hwnd, kHighWeight, s.highWeight), 0.0, 1.5);
 
   s.ambienceAttackMs = std::clamp(GetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs), 5.0, 5000.0);
   s.ambienceReleaseMs = std::clamp(GetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs), 10.0, 10000.0);
@@ -859,7 +892,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.11.1 visual lab \u2014 same v0.11 DSP, 30 Hz analyzer + modern controls.",
+      Label(hwnd, L"v0.11.2 spatial scene lab \u2014 smoother transients, subtle-cue rescue, visual speaker stage.",
             21, 48, 1040, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
@@ -875,7 +908,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Button(hwnd, kPresetAmbient, L"AMBIENT", 545, 73, 88);
       Button(hwnd, kPresetV03, L"BASE", 639, 73, 64);
 
-      Group(hwnd, L"Spatial field", 14, 108, 722, 300);
+      Group(hwnd, L"Spatial field", 14, 108, 722, 282);
       Label(hwnd, L"Adaptive ambience", 30, 136, 150, 22);
       Slider(hwnd, kAmbience, 180, 129, 445, 120, PercentToSlider(state->ambience));
       ValueLabel(hwnd, kAmbienceValue, 642, 136);
@@ -884,80 +917,80 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Slider(hwnd, kWidth, 180, 167, 445, 60, PercentToSlider(state->width));
       ValueLabel(hwnd, kWidthValue, 642, 174);
 
-      Label(hwnd, L"Ambience band emphasis", 30, 210, 160, 22, true);
-      Label(hwnd, L"LOW", 34, 237, 42, 20, true);
-      Slider(hwnd, kLowWeight, 78, 230, 145, 150, PercentToSlider(state->lowWeight));
-      ValueLabel(hwnd, kLowWeightValue, 220, 237, 52);
-      Label(hwnd, L"MID", 276, 237, 42, 20, true);
-      Slider(hwnd, kMidWeight, 316, 230, 145, 150, PercentToSlider(state->midWeight));
-      ValueLabel(hwnd, kMidWeightValue, 458, 237, 52);
-      Label(hwnd, L"HIGH", 512, 237, 45, 20, true);
-      Slider(hwnd, kHighWeight, 557, 230, 110, 150, PercentToSlider(state->highWeight));
-      ValueLabel(hwnd, kHighWeightValue, 670, 237, 52);
+      Label(hwnd, L"Band emphasis", 30, 217, 105, 22, true);
+      Label(hwnd, L"LOW", 142, 217, 35, 22, true);
+      Edit(hwnd, kLowWeight, 178, 213, 58);
+      Label(hwnd, L"MID", 258, 217, 35, 22, true);
+      Edit(hwnd, kMidWeight, 294, 213, 58);
+      Label(hwnd, L"HIGH", 375, 217, 40, 22, true);
+      Edit(hwnd, kHighWeight, 417, 213, 58);
+      Label(hwnd, L"weight", 484, 217, 55, 22, true);
 
-      Label(hwnd, L"Spectral intelligence", 30, 282, 150, 22);
-      Slider(hwnd, kSpectralIntelligence, 180, 275, 335, 100,
+      Label(hwnd, L"Spectral intelligence", 30, 258, 150, 22);
+      Slider(hwnd, kSpectralIntelligence, 180, 251, 335, 100,
              PercentToSlider(state->spectralIntelligence));
-      ValueLabel(hwnd, kSpectralIntelligenceValue, 520, 282, 60);
-      Label(hwnd, L"Bin selectivity", 588, 282, 88, 22, true);
-      Edit(hwnd, kSpatialBinThreshold, 676, 278, 48);
+      ValueLabel(hwnd, kSpectralIntelligenceValue, 520, 258, 60);
+      Label(hwnd, L"Selectivity", 588, 258, 75, 22, true);
+      Edit(hwnd, kSpatialBinThreshold, 664, 254, 50);
 
-      Label(hwnd, L"Steering attack", 30, 326, 105, 22);
-      Edit(hwnd, kAmbienceAttack, 137, 322, 72);
-      Label(hwnd, L"ms", 213, 326, 25, 22, true);
-      Label(hwnd, L"release", 265, 326, 55, 22);
-      Edit(hwnd, kAmbienceRelease, 323, 322, 72);
-      Label(hwnd, L"ms", 399, 326, 25, 22, true);
-      Label(hwnd, L"Intelligence = FFT classifier blend; selectivity = spatial-bin confidence threshold.",
-            30, 361, 680, 20, true);
+      Label(hwnd, L"Response", 30, 305, 70, 22);
+      Label(hwnd, L"attack", 108, 305, 44, 22, true);
+      Edit(hwnd, kAmbienceAttack, 153, 301, 65);
+      Label(hwnd, L"ms", 221, 305, 25, 22, true);
+      Label(hwnd, L"release", 268, 305, 50, 22, true);
+      Edit(hwnd, kAmbienceRelease, 320, 301, 68);
+      Label(hwnd, L"ms", 391, 305, 25, 22, true);
+      Label(hwnd, L"FFT scene recognition + soft ownership now catches subtle spatial cues.",
+            30, 346, 650, 22, true);
 
-      Group(hwnd, L"Front anchoring / direct events", 14, 416, 722, 198);
-      Label(hwnd, L"Front / vocal lock", 30, 444, 150, 22);
-      Slider(hwnd, kFrontLock, 180, 437, 445, 100, PercentToSlider(state->frontLock));
-      ValueLabel(hwnd, kFrontLockValue, 642, 444);
+      Group(hwnd, L"Front anchoring / transient protection", 14, 400, 722, 176);
+      Label(hwnd, L"Front / vocal lock", 30, 429, 150, 22);
+      Slider(hwnd, kFrontLock, 180, 422, 445, 100, PercentToSlider(state->frontLock));
+      ValueLabel(hwnd, kFrontLockValue, 642, 429);
 
-      Label(hwnd, L"Diffuse gate", 30, 485, 88, 22);
-      Edit(hwnd, kDiffuseThreshold, 120, 481, 72);
-      Label(hwnd, L"0 = always open; higher = only diffuse/room-like material", 201, 485, 360, 22, true);
-      Label(hwnd, L"Rear budget", 575, 485, 80, 22);
-      Edit(hwnd, kRearBudget, 656, 481, 58);
-      Label(hwnd, L"ratio", 716, 485, 35, 22, true);
+      Label(hwnd, L"Diffuse gate", 30, 472, 82, 22);
+      Edit(hwnd, kDiffuseThreshold, 114, 468, 58);
+      Label(hwnd, L"Rear budget", 206, 472, 78, 22);
+      Edit(hwnd, kRearBudget, 286, 468, 58);
+      Label(hwnd, L"Transient protect", 377, 472, 110, 22);
+      Edit(hwnd, kReject, 490, 468, 58);
 
-      Label(hwnd, L"Direct-event reject", 30, 524, 150, 22);
-      Slider(hwnd, kReject, 180, 517, 445, 100, PercentToSlider(state->directReject));
-      ValueLabel(hwnd, kRejectValue, 642, 524);
+      Label(hwnd, L"Event sensitivity", 30, 516, 105, 22);
+      Edit(hwnd, kDirectThreshold, 137, 512, 65);
+      Label(hwnd, L"Recovery", 236, 516, 62, 22);
+      Edit(hwnd, kDirectRecovery, 300, 512, 65);
+      Label(hwnd, L"ms", 368, 516, 25, 22, true);
+      Label(hwnd, L"Fast hats keep the continuous bed; only the adaptive event layer ducks.",
+            410, 512, 290, 38, true);
 
-      Label(hwnd, L"Sensitivity ratio", 30, 567, 105, 22);
-      Edit(hwnd, kDirectThreshold, 137, 563, 72);
-      Label(hwnd, L"(lower = catches more)", 214, 567, 130, 22, true);
-      Label(hwnd, L"Recovery", 405, 567, 62, 22);
-      Edit(hwnd, kDirectRecovery, 470, 563, 72);
-      Label(hwnd, L"ms", 546, 567, 25, 22, true);
+      Group(hwnd, L"Matrix / speaker behavior", 14, 586, 722, 178);
+      Label(hwnd, L"Per-bin mix", 30, 616, 80, 22);
+      Edit(hwnd, kPerBinRouting, 112, 612, 58);
+      Label(hwnd, L"Dimension", 205, 616, 75, 22);
+      Edit(hwnd, kDimension, 282, 612, 58);
+      Label(hwnd, L"Center width", 375, 616, 88, 22);
+      Edit(hwnd, kCenterWidth, 465, 612, 58);
+      Label(hwnd, L"(-1 front / +1 rear)", 535, 616, 145, 22, true);
 
-      Group(hwnd, L"Speaker voicing", 14, 622, 722, 142);
-      Label(hwnd, L"Center sparkle", 30, 650, 150, 22);
-      Slider(hwnd, kCenter, 180, 643, 445, 50, PercentToSlider(state->center));
-      ValueLabel(hwnd, kCenterValue, 642, 650);
+      Label(hwnd, L"Center sparkle", 30, 656, 100, 22);
+      Edit(hwnd, kCenter, 132, 652, 58);
+      Label(hwnd, L"Center band", 216, 656, 82, 22);
+      Edit(hwnd, kCenterHp, 300, 652, 68);
+      Label(hwnd, L"\u2014", 372, 656, 15, 22);
+      Edit(hwnd, kCenterLp, 390, 652, 72);
+      Label(hwnd, L"Rear band", 490, 656, 70, 22);
+      Edit(hwnd, kRearHp, 562, 652, 60);
+      Label(hwnd, L"\u2014", 626, 656, 15, 22);
+      Edit(hwnd, kRearLp, 644, 652, 66);
 
-      Label(hwnd, L"Center band", 30, 692, 88, 22);
-      Edit(hwnd, kCenterHp, 120, 688, 72);
-      Label(hwnd, L"\u2014", 197, 692, 15, 22);
-      Edit(hwnd, kCenterLp, 215, 688, 76);
-      Label(hwnd, L"Hz", 295, 692, 25, 22, true);
+      Label(hwnd, L"SL trim", 30, 699, 52, 22);
+      Edit(hwnd, kRearLeftTrim, 84, 695, 62);
+      Label(hwnd, L"SR trim", 178, 699, 52, 22);
+      Edit(hwnd, kRearRightTrim, 232, 695, 62);
+      Label(hwnd, L"Band steering / ownership timing follows the selected preset or saved config.",
+            320, 695, 380, 38, true);
 
-      Label(hwnd, L"Rear band", 348, 692, 72, 22);
-      Edit(hwnd, kRearHp, 423, 688, 70);
-      Label(hwnd, L"\u2014", 497, 692, 15, 22);
-      Edit(hwnd, kRearLp, 515, 688, 76);
-      Label(hwnd, L"Hz", 595, 692, 25, 22, true);
-
-      Label(hwnd, L"SL trim", 30, 729, 52, 22);
-      Edit(hwnd, kRearLeftTrim, 84, 725, 65);
-      Label(hwnd, L"SR trim", 178, 729, 52, 22);
-      Edit(hwnd, kRearRightTrim, 232, 725, 65);
-      Label(hwnd, L"1.00 = unity. Useful for room/speaker asymmetry.", 320, 729, 350, 20, true);
-
-      Group(hwnd, L"Geometry / time alignment", 14, 772, 722, 78);
+      Group(hwnd, L"Geometry / time alignment", 14, 774, 722, 76);
       Label(hwnd, L"FL", 30, 802, 24, 22); Edit(hwnd, kFl, 54, 798, 58);
       Label(hwnd, L"C", 133, 802, 18, 22); Edit(hwnd, kC, 151, 798, 58);
       Label(hwnd, L"FR", 229, 802, 24, 22); Edit(hwnd, kFr, 253, 798, 58);
@@ -976,62 +1009,21 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                   nullptr, nullptr);
       SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
-      // ---- v0.11.1 right-hand lab pane -------------------------------------------------------
-      HWND analyzer = CreateOhlAnalyzerVisual(hwnd, kAnalyzerViz, 752, 108, 342, 388);
+      HWND stage = CreateOhlStageVisual(hwnd, kStageViz, 752, 108, 342, 300);
+      SendMessageW(stage, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
+
+      HWND analyzer = CreateOhlAnalyzerVisual(hwnd, kAnalyzerViz, 752, 420, 342, 360);
       SendMessageW(analyzer, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
 
-      Group(hwnd, L"Per-bin router / matrix", 752, 508, 342, 282);
-
-      Label(hwnd, L"Per-bin routing", 770, 535, 118, 22);
-      Slider(hwnd, kPerBinRouting, 888, 528, 132, 100, PercentToSlider(state->perBinRouting));
-      ValueLabel(hwnd, kPerBinRoutingValue, 1022, 535, 55);
-
-      Label(hwnd, L"Dimension", 770, 570, 118, 22);
-      Slider(hwnd, kDimension, 888, 563, 132, 200,
-             static_cast<int>(std::lround((state->dimension + 1.0) * 100.0)));
-      ValueLabel(hwnd, kDimensionValue, 1022, 570, 55);
-
-      Label(hwnd, L"Center Width", 770, 605, 118, 22);
-      Slider(hwnd, kCenterWidth, 888, 598, 132, 100, PercentToSlider(state->centerWidth));
-      ValueLabel(hwnd, kCenterWidthValue, 1022, 605, 55);
-
-      Label(hwnd, L"Ownership", 770, 642, 72, 22, true);
-      Edit(hwnd, kSpectralAcquire, 842, 638, 48);
-      Label(hwnd, L"ms in", 894, 642, 34, 22, true);
-      Edit(hwnd, kSpectralRelease, 930, 638, 52);
-      Label(hwnd, L"ms out", 986, 642, 46, 22, true);
-
-      Label(hwnd, L"Band", 770, 678, 46, 20, true);
-      Label(hwnd, L"LOW", 826, 678, 46, 20, true);
-      Label(hwnd, L"BODY", 884, 678, 48, 20, true);
-      Label(hwnd, L"PRES", 944, 678, 48, 20, true);
-      Label(hwnd, L"AIR", 1004, 678, 46, 20, true);
-
-      Label(hwnd, L"Steer", 770, 705, 46, 22, true);
-      Edit(hwnd, kSteerLow, 820, 701, 48);
-      Edit(hwnd, kSteerBody, 880, 701, 48);
-      Edit(hwnd, kSteerPresence, 940, 701, 48);
-      Edit(hwnd, kSteerAir, 1000, 701, 48);
-
-      Label(hwnd, L"F-lock", 770, 741, 46, 22, true);
-      Edit(hwnd, kLockLow, 820, 737, 48);
-      Edit(hwnd, kLockBody, 880, 737, 48);
-      Edit(hwnd, kLockPresence, 940, 737, 48);
-      Edit(hwnd, kLockAir, 1000, 737, 48);
-
-      Label(hwnd, L"<250 Hz       250-2k        2-6k          >6k",
-            820, 765, 250, 18, true);
-
-      Group(hwnd, L"A / B audition", 752, 802, 342, 88);
-      Button(hwnd, kStoreA, L"STORE A", 770, 828, 72, 30);
-      Button(hwnd, kRecallA, L"A  \u25B6", 848, 828, 58, 30);
-      Button(hwnd, kStoreB, L"STORE B", 922, 828, 72, 30);
-      Button(hwnd, kRecallB, L"B  \u25B6", 1000, 828, 58, 30);
-      Label(hwnd, L"Recall applies immediately for ear A/B.", 770, 862, 300, 18, true);
+      Group(hwnd, L"A / B audition", 752, 792, 342, 98);
+      Button(hwnd, kStoreA, L"STORE A", 770, 822, 72, 30);
+      Button(hwnd, kRecallA, L"A  \u25B6", 848, 822, 58, 30);
+      Button(hwnd, kStoreB, L"STORE B", 922, 822, 72, 30);
+      Button(hwnd, kRecallB, L"B  \u25B6", 1000, 822, 58, 30);
+      Label(hwnd, L"Recall applies immediately for ear A/B.", 770, 856, 300, 18, true);
 
       PushStateToControls(hwnd, *state);
-      SetTimer(hwnd, kMetricsTimer, kMetricsIntervalMs, nullptr);
-      RefreshMetrics(hwnd);
+      StartMetricsWorker(hwnd);
       return 0;
     }
 
@@ -1111,13 +1103,19 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       break;
     }
 
-    case WM_TIMER:
-      if (wp == kMetricsTimer)
-      {
-        RefreshMetrics(hwnd);
+    case kMetricsMessage:
+    {
+      std::unique_ptr<OhlAnalyzerMetrics> metrics(
+          reinterpret_cast<OhlAnalyzerMetrics*>(lp));
+      if (!metrics)
         return 0;
-      }
-      break;
+
+      gLastUiMetrics = *metrics;
+      UpdateOhlAnalyzerVisual(GetDlgItem(hwnd, kAnalyzerViz), gLastUiMetrics);
+      if (state)
+        UpdateOhlStageVisual(GetDlgItem(hwnd, kStageViz), StageDistances(*state), gLastUiMetrics);
+      return 0;
+    }
 
     case WM_CTLCOLORSTATIC:
     {
@@ -1136,7 +1134,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
 
     case WM_DESTROY:
-      KillTimer(hwnd, kMetricsTimer);
+      StopMetricsWorker(hwnd);
       if (gTitleFont) { DeleteObject(gTitleFont); gTitleFont = nullptr; }
       if (gUiFont) { DeleteObject(gUiFont); gUiFont = nullptr; }
       if (gSmallFont) { DeleteObject(gSmallFont); gSmallFont = nullptr; }
@@ -1163,7 +1161,9 @@ int RunMusicSettingsGui(const std::string& configPath)
   LoadState(state);
 
   HINSTANCE instance = GetModuleHandleW(nullptr);
-  if (!RegisterOhlModernControls(instance) || !RegisterOhlAnalyzerVisual(instance))
+  if (!RegisterOhlModernControls(instance) ||
+      !RegisterOhlAnalyzerVisual(instance) ||
+      !RegisterOhlStageVisual(instance))
     return 1;
 
   gBg = CreateSolidBrush(RGB(15, 17, 23));
@@ -1182,7 +1182,7 @@ int RunMusicSettingsGui(const std::string& configPath)
 
   HWND hwnd = CreateWindowExW(
       0, kClassName, L"OHL Music Spatial Lab",
-      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+      WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
       CW_USEDEFAULT, CW_USEDEFAULT, 1120, 965,
       nullptr, nullptr, instance, &state);
 
