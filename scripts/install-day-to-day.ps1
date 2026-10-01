@@ -69,9 +69,10 @@ Write-Host "Install folder    -> $InstallDir"
 Write-Host "Startup folder    -> $startup"
 Write-Host "Start Menu folder -> $programsDir"
 Write-Host ''
-Write-Host 'Migrating legacy autostart and stopping old encoder processes...'
+Write-Host 'Migrating legacy autostart and stopping old OHL processes...'
 
 $knownRoots = @($InstallDir, $legacyInstallDir) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+$stoppedProcessIds = @()
 
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
   Where-Object {
@@ -92,6 +93,24 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
       }
     }
 
+    $knownUi = $false
+    if ($p.Name -ieq 'OHL-Control.exe') {
+      foreach ($root in $knownRoots) {
+        if ($p.ExecutablePath -and $p.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+          $knownUi = $true
+          break
+        }
+      }
+      if (-not $knownUi -and $p.CommandLine) {
+        $knownUi = (
+          $p.CommandLine -like '*OHL-Control.exe*' -and (
+            $p.CommandLine -like '*virtual-ac3-encoder*' -or
+            $p.CommandLine -like '*Virtual AC3 Encoder*'
+          )
+        )
+      }
+    }
+
     $knownWscript = (
       $p.Name -ieq 'wscript.exe' -and $p.CommandLine -and (
         $p.CommandLine -like '*VirtualAc3Encoder*' -or
@@ -100,16 +119,25 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
       )
     )
 
-    $knownEngine -or $knownWscript
+    $knownEngine -or $knownUi -or $knownWscript
   } |
   ForEach-Object {
     try {
-      Write-Host "  stopping $($_.Name) PID $($_.ProcessId)"
+      $processId = [int]$_.ProcessId
+      Write-Host "  stopping $($_.Name) PID $processId"
+      $stoppedProcessIds += $processId
       $_ | Invoke-CimMethod -MethodName Terminate | Out-Null
     } catch {}
   }
 
-Start-Sleep -Milliseconds 700
+# Termination is asynchronous. Wait for every process we asked to stop so Windows has released
+# executable image handles before we overwrite engine.exe / OHL-Control.exe.
+foreach ($processId in @($stoppedProcessIds | Select-Object -Unique)) {
+  try {
+    Wait-Process -Id $processId -Timeout 5 -ErrorAction SilentlyContinue
+  } catch {}
+}
+Start-Sleep -Milliseconds 200
 
 # Remove every known legacy Startup mechanism before installing the one authoritative OHL link.
 foreach ($legacyPath in @($legacyStartupVbs, $legacyStartupLnk, $ohlStartupLnk)) {
@@ -144,10 +172,33 @@ foreach ($valueName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder', 'OHL Virtua
   } catch {}
 }
 
+function Copy-WithRetry {
+  param(
+    [Parameter(Mandatory=$true)][string]$Source,
+    [Parameter(Mandatory=$true)][string]$Destination,
+    [int]$Attempts = 8
+  )
+
+  for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+    try {
+      Copy-Item -Path $Source -Destination $Destination -Force -ErrorAction Stop
+      return
+    } catch {
+      if ($attempt -ge $Attempts) {
+        throw
+      }
+      Write-Host "  copy busy; retrying $([IO.Path]::GetFileName($Source)) ($attempt/$Attempts)..."
+      Start-Sleep -Milliseconds (150 * $attempt)
+    }
+  }
+}
+
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Copy-Item $engineSrc $InstallDir -Force
-Copy-Item $uiSrc $InstallDir -Force
-Get-ChildItem -Path $SourceDir -Filter '*.dll' -File | Copy-Item -Destination $InstallDir -Force
+Copy-WithRetry -Source $engineSrc -Destination $InstallDir
+Copy-WithRetry -Source $uiSrc -Destination $InstallDir
+Get-ChildItem -Path $SourceDir -Filter '*.dll' -File | ForEach-Object {
+  Copy-WithRetry -Source $_.FullName -Destination $InstallDir
+}
 
 $configDst = Join-Path $InstallDir 'virtual-ac3-encoder.conf'
 $configSrc = Join-Path $SourceDir 'virtual-ac3-encoder.conf'
