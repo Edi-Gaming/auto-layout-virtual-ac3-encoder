@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 
 namespace {
@@ -282,7 +283,8 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
                               std::string* lastError,
                               std::mutex* errorMutex,
                               std::atomic_bool* reloadConfig,
-                              MusicTelemetry* musicTelemetry)
+                              MusicTelemetry* musicTelemetry,
+                              MusicCaptureLogger* musicCaptureLogger)
 {
   if (thread_.joinable())
     return true;
@@ -293,6 +295,7 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
   errorMutex_ = errorMutex;
   reloadConfig_ = reloadConfig;
   musicTelemetry_ = musicTelemetry;
+  musicCaptureLogger_ = musicCaptureLogger;
   stop_.store(false);
 
   try
@@ -376,6 +379,63 @@ void ModeControlServer::ThreadProc()
       else if (command == "metrics")
       {
         response = musicTelemetry_ ? musicTelemetry_->ToCompactString() : "offline";
+      }
+      else if (command.rfind("capture start", 0) == 0)
+      {
+        if (!musicCaptureLogger_)
+        {
+          response = "capture_state=error;error=logger_unavailable";
+        }
+        else
+        {
+          int seconds = 15;
+          const std::string suffix = command.substr(std::strlen("capture start"));
+          if (!suffix.empty())
+          {
+            char* end = nullptr;
+            const long parsed = std::strtol(suffix.c_str(), &end, 10);
+            while (end && *end == ' ') ++end;
+            if (!end || end == suffix.c_str() || *end != '\0' || parsed < 1 || parsed > 60)
+            {
+              response = "capture_state=error;error=invalid_duration";
+            }
+            else
+            {
+              seconds = static_cast<int>(parsed);
+              musicCaptureLogger_->Arm(seconds);
+              response = musicCaptureLogger_->GetStatus().ToCompactString();
+            }
+          }
+          else
+          {
+            musicCaptureLogger_->Arm(seconds);
+            response = musicCaptureLogger_->GetStatus().ToCompactString();
+          }
+        }
+      }
+      else if (command == "capture status")
+      {
+        response = musicCaptureLogger_
+            ? musicCaptureLogger_->GetStatus().ToCompactString()
+            : "capture_state=error;error=logger_unavailable";
+      }
+      else if (command == "capture cancel")
+      {
+        if (musicCaptureLogger_)
+        {
+          musicCaptureLogger_->Cancel();
+          response = musicCaptureLogger_->GetStatus().ToCompactString();
+        }
+        else
+        {
+          response = "capture_state=error;error=logger_unavailable";
+        }
+      }
+      else if (command == "capture latest")
+      {
+        response = musicCaptureLogger_
+            ? "capture_latest=" + musicCaptureLogger_->LatestPath()
+            : "capture_latest=";
       }
       else if (command == "status")
       {
