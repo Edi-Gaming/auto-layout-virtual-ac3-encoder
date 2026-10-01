@@ -40,7 +40,9 @@ enum ControlId
   kQ100,
   kQ120,
   kQ160,
-  kQ200
+  kQ200,
+  kQ500,
+  kQ1000
 };
 
 constexpr UINT_PTR kSweepTimer = 23;
@@ -361,7 +363,7 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
           kOhlSliderClass, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
           493, 166, 270, 32, hwnd,
           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFreq)), nullptr, nullptr);
-      SendMessageW(freq, TBM_SETRANGE, TRUE, MAKELPARAM(20, 200));
+      SendMessageW(freq, TBM_SETRANGE, TRUE, MAKELPARAM(20, 2000));
       SendMessageW(freq, TBM_SETPOS, TRUE, 80);
 
       Label(hwnd, L"Output level", 495, 207, 110, 22);
@@ -381,20 +383,22 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Button(hwnd, kQ80,  L"80",  607, 302, 50, 31);
       Button(hwnd, kQ100, L"100", 663, 302, 50, 31);
       Button(hwnd, kQ120, L"120", 719, 302, 50, 31);
-      Button(hwnd, kQ160, L"160", 523, 339, 58, 31);
-      Button(hwnd, kQ200, L"200", 589, 339, 58, 31);
+      Button(hwnd, kQ160, L"160", 495, 339, 58, 31);
+      Button(hwnd, kQ200, L"200", 561, 339, 58, 31);
+      Button(hwnd, kQ500, L"500", 627, 339, 58, 31);
+      Button(hwnd, kQ1000, L"1 kHz", 693, 339, 76, 31);
 
-      Button(hwnd, kFLLFE, L"FL + LFE", 655, 339, 114, 31);
-      Button(hwnd, kStep, L"STEP 40 → 200", 495, 389, 165, 36);
-      Button(hwnd, kStop, L"STOP ALL", 668, 389, 101, 36);
-
-      Label(hwnd,
-            L"Watch the Sony display: SW = sub output. LFE = incoming LFE channel actually reproduced.",
-            495, 438, 270, 36, true);
+      Button(hwnd, kFLLFE, L"FL + LFE", 495, 382, 120, 31);
+      Button(hwnd, kStep, L"BASS STEP 40 → 200", 623, 382, 146, 31);
+      Button(hwnd, kStop, L"STOP ALL", 668, 421, 101, 34);
 
       Label(hwnd,
-            L"Tests replace program audio only while active. LFE routes are capped at 120 Hz; "
-            L"closing this window stops the test and restores OHL Music.",
+            L"500 Hz / 1 kHz = channel ID.  40–200 Hz = bass routing.  LFE is capped at 120 Hz.",
+            495, 421, 165, 48, true);
+
+      Label(hwnd,
+            L"Channel ID: use 1 kHz, then click FL/C/FR/SL/SR. Bass probe: use 40–200 Hz. "
+            L"Closing this window stops the test and restores OHL Music.",
             20, 510, 760, 44, true);
 
       UpdateValueLabels(hwnd);
@@ -465,6 +469,8 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case kQ120: SetQuickFrequency(hwnd, 120); return 0;
         case kQ160: SetQuickFrequency(hwnd, 160); return 0;
         case kQ200: SetQuickFrequency(hwnd, 200); return 0;
+        case kQ500: SetQuickFrequency(hwnd, 500); return 0;
+        case kQ1000: SetQuickFrequency(hwnd, 1000); return 0;
       }
       break;
     }
