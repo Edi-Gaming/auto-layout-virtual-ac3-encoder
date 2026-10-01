@@ -357,6 +357,7 @@ void OhlMusicUpmixer::Reset()
   lastBandOwnership_ = {{0, 0, 0, 0}};
   lastBandCenter_ = {{0, 0, 0, 0}};
   lastRearBudgetScale_ = 1.0f;
+  spectralPrimed_ = false;
 }
 
 void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* out51)
@@ -583,12 +584,40 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
                   static_cast<double>(rearR) * rearR;
   }
 
-  // Hard rear-energy budget. The average RMS of the rear pair may never exceed rearBudget times
-  // the average RMS of the original front pair, regardless of what the detector or tuning asks.
+  // Hard rear-energy budget. During the very first spectral block, the rear stream begins with
+  // processingLatencySamples_ of intentional silence. Compare only time-aligned active samples in
+  // that startup block; otherwise the silent preroll would make the steady rear section appear
+  // artificially quiet and could exceed the promised budget after latency.
+  size_t budgetRearStart = 0;
+  size_t budgetFrames = frames;
+  double budgetFrontEnergy = full.eL + full.eR;
+  double budgetRearEnergy = rearEnergy;
+
+  if (processingLatencySamples_ > 0 && !spectralPrimed_)
+  {
+    budgetRearStart = std::min(
+        frames, static_cast<size_t>(processingLatencySamples_));
+    budgetFrames = frames - budgetRearStart;
+    budgetFrontEnergy = 0.0;
+    budgetRearEnergy = 0.0;
+
+    for (size_t i = 0; i < budgetFrames; ++i)
+    {
+      const float l = stereo[2 * i];
+      const float r = stereo[2 * i + 1];
+      const float rl = rearScratchL_[i + budgetRearStart];
+      const float rr = rearScratchR_[i + budgetRearStart];
+      budgetFrontEnergy += static_cast<double>(l) * l + static_cast<double>(r) * r;
+      budgetRearEnergy += static_cast<double>(rl) * rl + static_cast<double>(rr) * rr;
+    }
+  }
+
+  const double denomFrames = std::max<size_t>(budgetFrames, 1);
   const double frontRms = std::sqrt(
-      (full.eL + full.eR) / (2.0 * static_cast<double>(frames) + kEps));
+      budgetFrontEnergy / (2.0 * static_cast<double>(denomFrames) + kEps));
   const double rearRms = std::sqrt(
-      rearEnergy / (2.0 * static_cast<double>(frames) + kEps));
+      budgetRearEnergy / (2.0 * static_cast<double>(denomFrames) + kEps));
+
   float budgetScale = 1.0f;
   if (rearRms > kEps && frontRms > kEps)
   {
@@ -596,6 +625,8 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     budgetScale = static_cast<float>(std::min(1.0, allowed / rearRms));
   }
   lastRearBudgetScale_ = budgetScale;
+  if (processingLatencySamples_ > 0)
+    spectralPrimed_ = true;
 
   for (size_t i = 0; i < frames; ++i)
   {
