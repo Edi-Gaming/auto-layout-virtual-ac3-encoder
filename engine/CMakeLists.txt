@@ -163,6 +163,7 @@ add_executable(unit_tests
   test/test_ohl_spatial_analyzer.cpp
   test/test_ohl_spectral_router.cpp
   test/test_music_capture_logger.cpp
+  test/test_surround_test_state.cpp
 )
 target_include_directories(unit_tests PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/doctest"
