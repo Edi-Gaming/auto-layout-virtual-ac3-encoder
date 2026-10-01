@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "OhlSpatialAnalyzer.h"
+
 class OhlMusicUpmixer
 {
 public:
@@ -30,6 +32,10 @@ public:
     float ambienceAttackMs = 100.0f;
     float ambienceReleaseMs = 520.0f;
     float diffuseThreshold = 0.10f;
+
+    // v0.10 spectral intelligence. 0 = legacy broad-band v0.9 recognition, 1 = STFT classifier.
+    float spectralIntelligence = 0.90f;
+    float spatialBinThreshold = 0.30f;
 
     // 0..1 attenuation strength applied to the rear side field when a coherent front center
     // dominates. This is a gain control only; it never modifies waveform shape sample-by-sample.
@@ -63,6 +69,10 @@ public:
   float LastCorrelation() const { return lastCorrelation_; }
   float LastSurroundAmount() const { return surroundAmount_; }
   float LastFrontLockConfidence() const { return lastFrontLockConfidence_; }
+  float LastSpectralAmbience() const { return lastSpectralAmbience_; }
+  float LastSpatialBinFraction() const { return lastSpatialBinFraction_; }
+  float LastSpectralCenter() const { return lastSpectralCenter_; }
+  float LastSpectralTransient() const { return lastSpectralTransient_; }
   int ProcessingLatencySamples() const { return 0; }
   const std::array<int, kChannels>& DelaySamples() const { return delaySamples_; }
 
@@ -121,6 +131,7 @@ private:
   };
 
   Params params_{};
+  OhlSpatialAnalyzer spatialAnalyzer_;
   std::array<int, kChannels> delaySamples_{{0, 0, 0, 0, 0, 0}};
   std::array<DelayLine, kChannels> delays_;
 
@@ -147,4 +158,8 @@ private:
   float surroundAmount_ = 0.0f;
   float lastCorrelation_ = 1.0f;
   float lastFrontLockConfidence_ = 0.0f;
+  float lastSpectralAmbience_ = 0.0f;
+  float lastSpatialBinFraction_ = 0.0f;
+  float lastSpectralCenter_ = 0.0f;
+  float lastSpectralTransient_ = 0.0f;
 };
