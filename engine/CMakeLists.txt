@@ -107,6 +107,24 @@ target_include_directories(engine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated
 stage_ffmpeg_dlls(engine)
 
 # ---------------------------------------------------------------------------
+# Native no-console UI launcher. Keep engine.exe a console application so CLI diagnostics and
+# scripting remain normal, while tray/Start Menu GUI launches never create a black console window.
+# ---------------------------------------------------------------------------
+add_executable(ohl_ui WIN32
+  src/OhlUiMain.cpp
+  src/BrandIcon.cpp
+  src/BrandIcon.h
+  src/ModeControl.cpp
+  src/ModeControl.h
+  src/MusicSettings.cpp
+  src/MusicSettings.h
+)
+target_link_libraries(ohl_ui PRIVATE user32 gdi32 shell32 comctl32)
+if(MSVC)
+  target_compile_options(ohl_ui PRIVATE /permissive-)
+endif()
+
+# ---------------------------------------------------------------------------
 # Unit tests (doctest) — RingBuffer + encoder contract
 # ---------------------------------------------------------------------------
 enable_testing()
