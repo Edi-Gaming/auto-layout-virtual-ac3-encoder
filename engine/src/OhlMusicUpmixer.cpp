@@ -479,12 +479,15 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
 
     // Spatially active FFT bins get first say in rear directionality. Fall back toward the
     // broad packet energy shares as intelligence is reduced.
+    const double directionEvidence = std::clamp(
+        4.0 * static_cast<double>(spectral.spatialBinFraction), 0.0, 1.0);
+    const double directionIntelligence = intelligence * directionEvidence;
     const double smartLeftShare =
-        (1.0 - intelligence) * leftShare +
-        intelligence * static_cast<double>(spectral.spatialLeftShare);
+        (1.0 - directionIntelligence) * leftShare +
+        directionIntelligence * static_cast<double>(spectral.spatialLeftShare);
     const double smartRightShare =
-        (1.0 - intelligence) * rightShare +
-        intelligence * static_cast<double>(spectral.spatialRightShare);
+        (1.0 - directionIntelligence) * rightShare +
+        directionIntelligence * static_cast<double>(spectral.spatialRightShare);
     const float leftBias = static_cast<float>(
         0.10 + 0.90 * std::clamp(2.0 * smartLeftShare, 0.0, 1.0));
     const float rightBias = static_cast<float>(
