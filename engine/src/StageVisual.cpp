@@ -1,6 +1,7 @@
 #include "StageVisual.h"
 
 #include <windowsx.h>
+#include <gdiplus.h>
 
 #include <algorithm>
 #include <array>
@@ -20,6 +21,46 @@ constexpr COLORREF kGreen = RGB(86, 214, 154);
 constexpr COLORREF kPurple = RGB(173, 126, 255);
 constexpr COLORREF kAmber = RGB(241, 187, 84);
 constexpr COLORREF kRose = RGB(243, 111, 142);
+
+struct GdiPlusScope
+{
+  ULONG_PTR token = 0;
+  Gdiplus::GdiplusStartupInput input{};
+
+  GdiPlusScope()
+  {
+    Gdiplus::GdiplusStartup(&token, &input, nullptr);
+  }
+
+  ~GdiPlusScope()
+  {
+    if (token)
+      Gdiplus::GdiplusShutdown(token);
+  }
+};
+
+GdiPlusScope gGdiPlus;
+
+Gdiplus::Color GpColor(COLORREF c, BYTE alpha = 255)
+{
+  return Gdiplus::Color(alpha, GetRValue(c), GetGValue(c), GetBValue(c));
+}
+
+void RoundedPath(Gdiplus::GraphicsPath& path,
+                 Gdiplus::REAL x,
+                 Gdiplus::REAL y,
+                 Gdiplus::REAL w,
+                 Gdiplus::REAL h,
+                 Gdiplus::REAL radius)
+{
+  const Gdiplus::REAL d = radius * 2.0f;
+  path.Reset();
+  path.AddArc(x, y, d, d, 180.0f, 90.0f);
+  path.AddArc(x + w - d, y, d, d, 270.0f, 90.0f);
+  path.AddArc(x + w - d, y + h - d, d, d, 0.0f, 90.0f);
+  path.AddArc(x, y + h - d, d, d, 90.0f, 90.0f);
+  path.CloseFigure();
+}
 
 struct Vec2
 {
@@ -97,12 +138,19 @@ COLORREF Blend(COLORREF a, COLORREF b, float t)
 
 void DrawConnection(HDC dc, POINT a, POINT b, COLORREF color, int width)
 {
-  HPEN p = CreatePen(PS_SOLID, width, color);
-  HGDIOBJ old = SelectObject(dc, p);
-  MoveToEx(dc, a.x, a.y, nullptr);
-  LineTo(dc, b.x, b.y);
-  SelectObject(dc, old);
-  DeleteObject(p);
+  Gdiplus::Graphics graphics(dc);
+  graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+  graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+
+  Gdiplus::Pen pen(GpColor(color), static_cast<Gdiplus::REAL>(width));
+  pen.SetStartCap(Gdiplus::LineCapRound);
+  pen.SetEndCap(Gdiplus::LineCapRound);
+  graphics.DrawLine(
+      &pen,
+      static_cast<Gdiplus::REAL>(a.x),
+      static_cast<Gdiplus::REAL>(a.y),
+      static_cast<Gdiplus::REAL>(b.x),
+      static_cast<Gdiplus::REAL>(b.y));
 }
 
 float SpeakerActivity(const OhlAnalyzerMetrics& metrics, int stageIndex)
@@ -190,36 +238,53 @@ void DrawSpeaker(HDC dc,
   const int halfH = hovered || dragging ? 27 : 24;
   RECT body{p.x - halfW, p.y - halfH, p.x + halfW, p.y + halfH - 4};
 
-  if (activity > 0.05f)
   {
-    const int glow = 5 + static_cast<int>(std::lround(activity * 9.0f));
-    RECT glowRect{
-        body.left - glow, body.top - glow,
-        body.right + glow, body.bottom + glow};
-    FillRound(dc, glowRect, 12, Blend(kCard, activeColor, 0.10f + 0.16f * activity));
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+
+    if (activity > 0.05f)
+    {
+      const int glow = 5 + static_cast<int>(std::lround(activity * 9.0f));
+      Gdiplus::GraphicsPath glowPath;
+      RoundedPath(
+          glowPath,
+          static_cast<Gdiplus::REAL>(body.left - glow),
+          static_cast<Gdiplus::REAL>(body.top - glow),
+          static_cast<Gdiplus::REAL>((body.right - body.left) + glow * 2),
+          static_cast<Gdiplus::REAL>((body.bottom - body.top) + glow * 2),
+          12.0f);
+      Gdiplus::SolidBrush glowBrush(
+          GpColor(Blend(kCard, activeColor, 0.10f + 0.16f * activity)));
+      graphics.FillPath(&glowBrush, &glowPath);
+    }
+
+    Gdiplus::GraphicsPath bodyPath;
+    RoundedPath(
+        bodyPath,
+        static_cast<Gdiplus::REAL>(body.left),
+        static_cast<Gdiplus::REAL>(body.top),
+        static_cast<Gdiplus::REAL>(body.right - body.left),
+        static_cast<Gdiplus::REAL>(body.bottom - body.top),
+        9.0f);
+
+    Gdiplus::SolidBrush shellBrush(GpColor(shell));
+    graphics.FillPath(&shellBrush, &bodyPath);
+
+    Gdiplus::Pen borderPen(
+        GpColor(Blend(kBorder, activeColor, (std::max)(activity, interaction))),
+        dragging ? 2.0f : 1.0f);
+    graphics.DrawPath(&borderPen, &bodyPath);
+
+    Gdiplus::SolidBrush woofer(
+        GpColor(Blend(RGB(20, 26, 35), activeColor, 0.35f + 0.35f * activity)));
+    graphics.FillEllipse(
+        &woofer,
+        static_cast<Gdiplus::REAL>(p.x - 9),
+        static_cast<Gdiplus::REAL>(p.y - 10),
+        18.0f,
+        18.0f);
   }
-
-  FillRound(dc, body, 9, shell);
-
-  HPEN border = CreatePen(
-      PS_SOLID,
-      dragging ? 2 : 1,
-      Blend(kBorder, activeColor, std::max(activity, interaction)));
-  HGDIOBJ oldP = SelectObject(dc, border);
-  HGDIOBJ oldB = SelectObject(dc, GetStockObject(NULL_BRUSH));
-  RoundRect(dc, body.left, body.top, body.right - 1, body.bottom - 1, 9, 9);
-  SelectObject(dc, oldB);
-  SelectObject(dc, oldP);
-  DeleteObject(border);
-
-  HBRUSH woofer = CreateSolidBrush(
-      Blend(RGB(20, 26, 35), activeColor, 0.35f + 0.35f * activity));
-  oldB = SelectObject(dc, woofer);
-  oldP = SelectObject(dc, GetStockObject(NULL_PEN));
-  Ellipse(dc, p.x - 9, p.y - 10, p.x + 9, p.y + 8);
-  SelectObject(dc, oldP);
-  SelectObject(dc, oldB);
-  DeleteObject(woofer);
 
   RECT nameRect{p.x - 36, p.y + 24, p.x + 36, p.y + 42};
   DrawTextSimple(dc, font, kText, name, nameRect,
@@ -238,41 +303,55 @@ void DrawSpeaker(HDC dc,
 void DrawListener(HDC dc, HFONT font, POINT head, float field)
 {
   const int halo = 34 + static_cast<int>(std::lround(25.0f * field));
-  HPEN haloPen = CreatePen(PS_SOLID, 2, Blend(kGrid, kBlue, field));
-  HGDIOBJ oldP = SelectObject(dc, haloPen);
-  HGDIOBJ oldB = SelectObject(dc, GetStockObject(NULL_BRUSH));
-  Ellipse(dc, head.x - halo, head.y - halo, head.x + halo, head.y + halo);
-  SelectObject(dc, oldB);
-  SelectObject(dc, oldP);
-  DeleteObject(haloPen);
 
-  HBRUSH ear = CreateSolidBrush(RGB(50, 60, 76));
-  oldB = SelectObject(dc, ear);
-  oldP = SelectObject(dc, GetStockObject(NULL_PEN));
-  Ellipse(dc, head.x - 27, head.y - 10, head.x - 15, head.y + 10);
-  Ellipse(dc, head.x + 15, head.y - 10, head.x + 27, head.y + 10);
-  SelectObject(dc, oldP);
-  SelectObject(dc, oldB);
-  DeleteObject(ear);
+  {
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
 
-  HBRUSH headBrush = CreateSolidBrush(RGB(45, 54, 69));
-  oldB = SelectObject(dc, headBrush);
-  oldP = SelectObject(dc, GetStockObject(NULL_PEN));
-  Ellipse(dc, head.x - 21, head.y - 23, head.x + 21, head.y + 23);
-  SelectObject(dc, oldP);
-  SelectObject(dc, oldB);
-  DeleteObject(headBrush);
+    Gdiplus::Pen haloPen(GpColor(Blend(kGrid, kBlue, field)), 2.0f);
+    graphics.DrawEllipse(
+        &haloPen,
+        static_cast<Gdiplus::REAL>(head.x - halo),
+        static_cast<Gdiplus::REAL>(head.y - halo),
+        static_cast<Gdiplus::REAL>(halo * 2),
+        static_cast<Gdiplus::REAL>(halo * 2));
 
-  HPEN facing = CreatePen(PS_SOLID, 2, kText);
-  oldP = SelectObject(dc, facing);
-  MoveToEx(dc, head.x, head.y - 15, nullptr);
-  LineTo(dc, head.x, head.y - 31);
-  MoveToEx(dc, head.x - 6, head.y - 11, nullptr);
-  LineTo(dc, head.x - 11, head.y - 19);
-  MoveToEx(dc, head.x + 6, head.y - 11, nullptr);
-  LineTo(dc, head.x + 11, head.y - 19);
-  SelectObject(dc, oldP);
-  DeleteObject(facing);
+    Gdiplus::SolidBrush ear(GpColor(RGB(50, 60, 76)));
+    graphics.FillEllipse(&ear,
+                         static_cast<Gdiplus::REAL>(head.x - 27),
+                         static_cast<Gdiplus::REAL>(head.y - 10),
+                         12.0f, 20.0f);
+    graphics.FillEllipse(&ear,
+                         static_cast<Gdiplus::REAL>(head.x + 15),
+                         static_cast<Gdiplus::REAL>(head.y - 10),
+                         12.0f, 20.0f);
+
+    Gdiplus::SolidBrush headBrush(GpColor(RGB(45, 54, 69)));
+    graphics.FillEllipse(&headBrush,
+                         static_cast<Gdiplus::REAL>(head.x - 21),
+                         static_cast<Gdiplus::REAL>(head.y - 23),
+                         42.0f, 46.0f);
+
+    Gdiplus::Pen facing(GpColor(kText), 2.0f);
+    facing.SetStartCap(Gdiplus::LineCapRound);
+    facing.SetEndCap(Gdiplus::LineCapRound);
+    graphics.DrawLine(&facing,
+                      static_cast<Gdiplus::REAL>(head.x),
+                      static_cast<Gdiplus::REAL>(head.y - 15),
+                      static_cast<Gdiplus::REAL>(head.x),
+                      static_cast<Gdiplus::REAL>(head.y - 31));
+    graphics.DrawLine(&facing,
+                      static_cast<Gdiplus::REAL>(head.x - 6),
+                      static_cast<Gdiplus::REAL>(head.y - 11),
+                      static_cast<Gdiplus::REAL>(head.x - 11),
+                      static_cast<Gdiplus::REAL>(head.y - 19));
+    graphics.DrawLine(&facing,
+                      static_cast<Gdiplus::REAL>(head.x + 6),
+                      static_cast<Gdiplus::REAL>(head.y - 11),
+                      static_cast<Gdiplus::REAL>(head.x + 11),
+                      static_cast<Gdiplus::REAL>(head.y - 19));
+  }
 
   RECT label{head.x - 48, head.y + 29, head.x + 48, head.y + 48};
   DrawTextSimple(dc, font, kMuted, L"LISTENER", label,
