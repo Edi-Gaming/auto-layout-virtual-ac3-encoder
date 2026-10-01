@@ -64,7 +64,8 @@ bool OhlSpectralRouter::Init(const Params& params)
   outQueueL_.clear();
   outQueueR_.clear();
   outRead_ = 0;
-  initialSilence_ = params_.hopSize;
+  initialSilence_ = params_.fftSize;
+  discardPrerollHop_ = true;
 
   smoothPL_.assign(bins, 0.0);
   smoothPR_.assign(bins, 0.0);
@@ -85,7 +86,8 @@ void OhlSpectralRouter::Reset()
   outQueueL_.clear();
   outQueueR_.clear();
   outRead_ = 0;
-  initialSilence_ = params_.hopSize;
+  initialSilence_ = params_.fftSize;
+  discardPrerollHop_ = true;
 
   std::fill(smoothPL_.begin(), smoothPL_.end(), 0.0);
   std::fill(smoothPR_.begin(), smoothPR_.end(), 0.0);
@@ -319,10 +321,19 @@ void OhlSpectralRouter::ProcessFrame()
     olaR_[i] += static_cast<float>(outR[i].real()) * window_[i];
   }
 
-  for (size_t i = 0; i < h; ++i)
+  if (discardPrerollHop_)
   {
-    outQueueL_.push_back(olaL_[i]);
-    outQueueR_.push_back(olaR_[i]);
+    // The first frame spans the synthetic -hop..+hop preroll. Its first overlap-add half belongs
+    // before time zero and must not appear in the causal output stream.
+    discardPrerollHop_ = false;
+  }
+  else
+  {
+    for (size_t i = 0; i < h; ++i)
+    {
+      outQueueL_.push_back(olaL_[i]);
+      outQueueR_.push_back(olaR_[i]);
+    }
   }
 
   std::move(olaL_.begin() + static_cast<std::ptrdiff_t>(h), olaL_.end(), olaL_.begin());
