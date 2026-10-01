@@ -36,5 +36,9 @@ TEST_CASE("Surround Wizard route parser covers discrete and combined routes")
   CHECK(route == SurroundTestRoute::LFE);
   CHECK(ParseSurroundTestRoute("fl+lfe", route));
   CHECK(route == SurroundTestRoute::FL_LFE);
+  CHECK(ParseSurroundTestRoute("fl+lfe-10", route));
+  CHECK(route == SurroundTestRoute::FL_LFE_M10);
+  CHECK(ParseSurroundTestRoute("fl+lfe-inv", route));
+  CHECK(route == SurroundTestRoute::FL_LFE_INV);
   CHECK_FALSE(ParseSurroundTestRoute("banana", route));
 }
