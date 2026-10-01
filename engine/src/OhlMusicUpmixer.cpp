@@ -270,6 +270,8 @@ bool OhlMusicUpmixer::Init(const Params& params)
       params_.perBinRouting > 1.0e-6f ? spectralRouter_.LatencySamples() : 0;
   broadRearDelayL_.Configure(processingLatencySamples_);
   broadRearDelayR_.Configure(processingLatencySamples_);
+  budgetFrontDelayL_.Configure(processingLatencySamples_);
+  budgetFrontDelayR_.Configure(processingLatencySamples_);
 
   float farthest = 0.0f;
   for (float d : params_.distanceInches)
@@ -345,6 +347,8 @@ void OhlMusicUpmixer::Reset()
   spectralRouter_.Reset();
   broadRearDelayL_.Reset();
   broadRearDelayR_.Reset();
+  budgetFrontDelayL_.Reset();
+  budgetFrontDelayR_.Reset();
 
   gainInitialized_ = false;
   surroundAmount_ = 0.0f;
@@ -357,7 +361,7 @@ void OhlMusicUpmixer::Reset()
   lastBandOwnership_ = {{0, 0, 0, 0}};
   lastBandCenter_ = {{0, 0, 0, 0}};
   lastRearBudgetScale_ = 1.0f;
-  spectralPrimed_ = false;
+  frontBudgetEnvelope_ = 0.0f;
 }
 
 void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* out51)
@@ -489,12 +493,18 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
 
   rearScratchL_.assign(frames, 0.0f);
   rearScratchR_.assign(frames, 0.0f);
+  std::vector<float> budgetFrontL(frames, 0.0f);
+  std::vector<float> budgetFrontR(frames, 0.0f);
   double rearEnergy = 0.0;
 
   for (size_t i = 0; i < frames; ++i)
   {
     const float l = stereo[2 * i];
     const float r = stereo[2 * i + 1];
+
+    budgetFrontL[i] = budgetFrontDelayL_.Process(l);
+    budgetFrontR[i] = budgetFrontDelayR_.Process(r);
+
     // Detect a local direct event from the full programme envelope. This is deliberately
     // independent of the ambience analyser: a clap can be stereo/side-heavy yet still be a direct
     // event we do not want to localize behind the listener.
@@ -584,49 +594,77 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
                   static_cast<double>(rearR) * rearR;
   }
 
-  // Hard rear-energy budget. During the very first spectral block, the rear stream begins with
-  // processingLatencySamples_ of intentional silence. Compare only time-aligned active samples in
-  // that startup block; otherwise the silent preroll would make the steady rear section appear
-  // artificially quiet and could exceed the promised budget after latency.
-  size_t budgetRearStart = 0;
-  size_t budgetFrames = frames;
-  double budgetFrontEnergy = full.eL + full.eR;
-  double budgetRearEnergy = rearEnergy;
+  // Hard rear-energy budget using a time-aligned front reference. Inspect short RMS windows
+  // rather than one packet average so a spectral acquire ramp cannot hide an over-loud steady tail.
+  // The front reference itself has a slow release: this preserves legitimate ambience/reverb tails
+  // after a loud front event instead of clamping them merely because the dry signal just decayed.
+  constexpr size_t kBudgetWindow = 512;
+  constexpr size_t kBudgetHop = 256;
 
-  if (processingLatencySamples_ > 0 && !spectralPrimed_)
+  double maxFrontWindowRms = 0.0;
+  double maxRearWindowRms = 0.0;
+
+  auto inspectBudgetWindow = [&](size_t begin, size_t count)
   {
-    budgetRearStart = std::min(
-        frames, static_cast<size_t>(processingLatencySamples_));
-    budgetFrames = frames - budgetRearStart;
-    budgetFrontEnergy = 0.0;
-    budgetRearEnergy = 0.0;
+    if (count == 0)
+      return;
 
-    for (size_t i = 0; i < budgetFrames; ++i)
+    double frontEnergy = 0.0;
+    double rearWindowEnergy = 0.0;
+    for (size_t j = begin; j < begin + count; ++j)
     {
-      const float l = stereo[2 * i];
-      const float r = stereo[2 * i + 1];
-      const float rl = rearScratchL_[i + budgetRearStart];
-      const float rr = rearScratchR_[i + budgetRearStart];
-      budgetFrontEnergy += static_cast<double>(l) * l + static_cast<double>(r) * r;
-      budgetRearEnergy += static_cast<double>(rl) * rl + static_cast<double>(rr) * rr;
+      const double fl = budgetFrontL[j];
+      const double fr = budgetFrontR[j];
+      const double rl = rearScratchL_[j];
+      const double rr = rearScratchR_[j];
+      frontEnergy += fl * fl + fr * fr;
+      rearWindowEnergy += rl * rl + rr * rr;
     }
+
+    const double denom = 2.0 * static_cast<double>(count) + kEps;
+    maxFrontWindowRms = std::max(maxFrontWindowRms, std::sqrt(frontEnergy / denom));
+    maxRearWindowRms = std::max(maxRearWindowRms, std::sqrt(rearWindowEnergy / denom));
+  };
+
+  if (frames <= kBudgetWindow)
+  {
+    inspectBudgetWindow(0, frames);
+  }
+  else
+  {
+    for (size_t begin = 0; begin + kBudgetWindow <= frames; begin += kBudgetHop)
+      inspectBudgetWindow(begin, kBudgetWindow);
+
+    const size_t tailBegin = frames - kBudgetWindow;
+    if (tailBegin % kBudgetHop != 0)
+      inspectBudgetWindow(tailBegin, kBudgetWindow);
   }
 
-  const double denomFrames = std::max<size_t>(budgetFrames, 1);
-  const double frontRms = std::sqrt(
-      budgetFrontEnergy / (2.0 * static_cast<double>(denomFrames) + kEps));
-  const double rearRms = std::sqrt(
-      budgetRearEnergy / (2.0 * static_cast<double>(denomFrames) + kEps));
+  if (maxFrontWindowRms >= static_cast<double>(frontBudgetEnvelope_))
+  {
+    frontBudgetEnvelope_ = static_cast<float>(maxFrontWindowRms);
+  }
+  else
+  {
+    const double packetMs =
+        1000.0 * static_cast<double>(frames) / static_cast<double>(params_.sampleRate);
+    const double releaseMs =
+        std::max(350.0, static_cast<double>(params_.ambienceReleaseMs));
+    const float alpha = static_cast<float>(1.0 - std::exp(-packetMs / releaseMs));
+    frontBudgetEnvelope_ +=
+        std::clamp(alpha, 0.0f, 1.0f) *
+        (static_cast<float>(maxFrontWindowRms) - frontBudgetEnvelope_);
+  }
 
   float budgetScale = 1.0f;
-  if (rearRms > kEps && frontRms > kEps)
+  if (maxRearWindowRms > kEps && frontBudgetEnvelope_ > static_cast<float>(kEps))
   {
-    const double allowed = static_cast<double>(params_.rearBudget) * frontRms;
-    budgetScale = static_cast<float>(std::min(1.0, allowed / rearRms));
+    const double allowed =
+        static_cast<double>(params_.rearBudget) *
+        static_cast<double>(frontBudgetEnvelope_);
+    budgetScale = static_cast<float>(std::min(1.0, allowed / maxRearWindowRms));
   }
   lastRearBudgetScale_ = budgetScale;
-  if (processingLatencySamples_ > 0)
-    spectralPrimed_ = true;
 
   for (size_t i = 0; i < frames; ++i)
   {
