@@ -27,6 +27,21 @@ HFONT gUiFont = nullptr;
 HFONT gButtonFont = nullptr;
 constexpr UINT_PTR kStatusTimer = 1;
 
+std::wstring UiLauncherPath()
+{
+  wchar_t exe[MAX_PATH] = {};
+  const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH)
+    return L"OHL-Control.exe";
+
+  std::wstring path(exe, n);
+  const size_t slash = path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos)
+    return L"OHL-Control.exe";
+
+  return path.substr(0, slash + 1) + L"OHL-Control.exe";
+}
+
 std::wstring WidenUtf8(const std::string& s)
 {
   if (s.empty()) return {};
@@ -71,10 +86,8 @@ void RefreshStatus(HWND hwnd)
 
 void LaunchMusicSettings()
 {
-  wchar_t exe[MAX_PATH] = {};
-  if (!GetModuleFileNameW(nullptr, exe, MAX_PATH))
-    return;
-  ShellExecuteW(nullptr, L"open", exe, L"--music-settings", nullptr, SW_SHOWNORMAL);
+  const std::wstring exe = UiLauncherPath();
+  ShellExecuteW(nullptr, L"open", exe.c_str(), L"--music-settings", nullptr, SW_SHOWNORMAL);
 }
 
 void RequestMode(HWND hwnd, const char* mode)
