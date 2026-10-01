@@ -211,6 +211,12 @@ bool OhlMusicUpmixer::Init(const Params& params)
       params.spectralIntelligence > 1.0f ||
       !std::isfinite(params.spatialBinThreshold) || params.spatialBinThreshold < 0.0f ||
       params.spatialBinThreshold > 1.0f ||
+      !std::isfinite(params.perBinRouting) || params.perBinRouting < 0.0f ||
+      params.perBinRouting > 1.0f ||
+      !std::isfinite(params.spectralAcquireMs) || params.spectralAcquireMs <= 0.0f ||
+      !std::isfinite(params.spectralReleaseMs) || params.spectralReleaseMs <= 0.0f ||
+      !std::isfinite(params.dimension) || params.dimension < -1.0f || params.dimension > 1.0f ||
+      !std::isfinite(params.centerWidth) || params.centerWidth < 0.0f || params.centerWidth > 1.0f ||
       !std::isfinite(params.frontLock) || params.frontLock < 0.0f || params.frontLock > 1.0f ||
       !std::isfinite(params.rearBudget) || params.rearBudget <= 0.0f ||
       params.rearBudget > 1.0f ||
@@ -229,6 +235,13 @@ bool OhlMusicUpmixer::Init(const Params& params)
 
   params_ = params;
 
+  for (float v : params_.spectralSteering)
+    if (!std::isfinite(v) || v < 0.0f || v > 4.0f)
+      return false;
+  for (float v : params_.spectralFrontLock)
+    if (!std::isfinite(v) || v < 0.0f || v > 2.0f)
+      return false;
+
   OhlSpatialAnalyzer::Params analyzerParams;
   analyzerParams.sampleRate = params_.sampleRate;
   analyzerParams.fftSize = 512;
@@ -236,6 +249,26 @@ bool OhlMusicUpmixer::Init(const Params& params)
   analyzerParams.spatialBinThreshold = params_.spatialBinThreshold;
   if (!spatialAnalyzer_.Init(analyzerParams))
     return false;
+
+  OhlSpectralRouter::Params routerParams;
+  routerParams.sampleRate = params_.sampleRate;
+  routerParams.fftSize = 512;
+  routerParams.hopSize = 256;
+  routerParams.spatialThreshold = params_.spatialBinThreshold;
+  routerParams.acquireMs = params_.spectralAcquireMs;
+  routerParams.releaseMs = params_.spectralReleaseMs;
+  routerParams.surroundGain = params_.surroundGain;
+  routerParams.widthFloor = params_.widthFloor;
+  routerParams.dimension = params_.dimension;
+  routerParams.steering = params_.spectralSteering;
+  routerParams.frontLock = params_.spectralFrontLock;
+  routerParams.globalFrontLock = params_.frontLock;
+  routerParams.directReject = params_.directReject;
+  if (!spectralRouter_.Init(routerParams))
+    return false;
+  processingLatencySamples_ = spectralRouter_.LatencySamples();
+  broadRearDelayL_.Configure(processingLatencySamples_);
+  broadRearDelayR_.Configure(processingLatencySamples_);
 
   float farthest = 0.0f;
   for (float d : params_.distanceInches)
@@ -253,7 +286,9 @@ bool OhlMusicUpmixer::Init(const Params& params)
     const double delaySeconds = extraDistanceMetres / kSpeedOfSoundMetresPerSecond;
     delaySamples_[static_cast<size_t>(ch)] =
         static_cast<int>(std::lround(delaySeconds * static_cast<double>(params_.sampleRate)));
-    delays_[static_cast<size_t>(ch)].Configure(delaySamples_[static_cast<size_t>(ch)]);
+    const int spectralCompensation = ch < 4 ? processingLatencySamples_ : 0;
+    delays_[static_cast<size_t>(ch)].Configure(
+        delaySamples_[static_cast<size_t>(ch)] + spectralCompensation);
   }
 
   // Three broad analysis bands: <300 Hz, ~300-3000 Hz, >3000 Hz.
