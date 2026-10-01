@@ -152,6 +152,8 @@ private:
   std::array<DelayLine, kChannels> delays_;
   DelayLine broadRearDelayL_;
   DelayLine broadRearDelayR_;
+  DelayLine budgetFrontDelayL_;
+  DelayLine budgetFrontDelayR_;
 
   OnePoleLowpass analysisLowL_;
   OnePoleLowpass analysisLowR_;
@@ -183,5 +185,5 @@ private:
   std::array<float, 4> lastBandOwnership_{{0, 0, 0, 0}};
   std::array<float, 4> lastBandCenter_{{0, 0, 0, 0}};
   float lastRearBudgetScale_ = 1.0f;
-  bool spectralPrimed_ = false;
+  float frontBudgetEnvelope_ = 0.0f;
 };
