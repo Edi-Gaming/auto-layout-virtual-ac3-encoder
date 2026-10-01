@@ -215,7 +215,10 @@ bool StartRoute(HWND hwnd, std::string route, bool fromSweep = false)
   }
 
   if (!fromSweep)
+  {
     StopSweep(hwnd);
+    StopAuto(hwnd);
+  }
 
   gRoute = route;
   CheckRouteButtons(hwnd, route);
@@ -344,7 +347,9 @@ void AdvanceAuto(HWND hwnd)
 
 HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool useSmall = false)
 {
-  const bool onCard = x >= 475 && x < 785 && y >= 104 && y < 485;
+  const bool onCard =
+      (x >= 475 && x < 785 && y >= 104 && y < 485) ||
+      (x >= 20 && x < 785 && y >= 500 && y < 612);
   HWND c = CreateWindowW(
       onCard ? kOhlCardLabelClass : L"STATIC", text, WS_CHILD | WS_VISIBLE,
       x, y, w, h, parent, nullptr, nullptr, nullptr);
