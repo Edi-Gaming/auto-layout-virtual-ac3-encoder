@@ -243,3 +243,85 @@ TEST_CASE("v0.11 spectral ownership releases through silence")
   MESSAGE("ownership after silence=" << released);
   CHECK(released < owned * 0.20f);
 }
+
+
+TEST_CASE("v0.11.2 transient protection never chops the continuous air-band width bed")
+{
+  constexpr size_t frames = 16384;
+  std::vector<float> hats(frames * 2, 0.0f);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double t = static_cast<double>(i) / 48000.0;
+    const size_t period = 2400; // 50 ms.
+    const size_t phase = i % period;
+    const float env = phase < 420
+        ? static_cast<float>(1.0 - static_cast<double>(phase) / 420.0)
+        : 0.0f;
+    const float s = 0.30f * env * static_cast<float>(std::sin(2.0 * kPi * 9000.0 * t));
+    hats[2 * i] = s;
+    hats[2 * i + 1] = -s;
+  }
+
+  auto open = BaseParams();
+  open.widthFloor = 0.28f;
+  open.surroundGain = 0.0f; // isolate the continuous bed.
+  open.steering = {{0.0f, 0.0f, 0.0f, 1.0f}};
+  open.directReject = 0.0f;
+
+  auto protectedP = open;
+  protectedP.directReject = 1.0f;
+
+  OhlSpectralRouter a;
+  OhlSpectralRouter b;
+  REQUIRE(a.Init(open));
+  REQUIRE(b.Init(protectedP));
+
+  std::vector<float> al, ar, bl, br;
+  Run(a, hats, al, ar);
+  Run(b, hats, bl, br);
+
+  const double openRms = 0.5 * (Rms(al, 2048) + Rms(ar, 2048));
+  const double protectedRms = 0.5 * (Rms(bl, 2048) + Rms(br, 2048));
+  MESSAGE("hat bed open=" << openRms << " protected=" << protectedRms);
+
+  CHECK(openRms > 0.001);
+  CHECK(std::fabs(openRms - protectedRms) < openRms * 0.01);
+}
+
+TEST_CASE("v0.11.2 soft ownership gives subtle stereo space a small rear contribution")
+{
+  constexpr size_t frames = 16384;
+  std::vector<float> in(frames * 2, 0.0f);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double t = static_cast<double>(i) / 48000.0;
+    const float common =
+        0.24f * static_cast<float>(std::sin(2.0 * kPi * 4000.0 * t));
+    const float side =
+        0.14f * static_cast<float>(std::cos(2.0 * kPi * 4000.0 * t));
+    in[2 * i] = common + side;
+    in[2 * i + 1] = common - side;
+  }
+
+  auto p = BaseParams();
+  p.widthFloor = 0.0f;
+  p.surroundGain = 0.80f;
+  p.spatialThreshold = 0.30f;
+  p.steering = {{0.0f, 0.0f, 1.0f, 0.0f}};
+  p.globalFrontLock = 0.0f;
+  p.directReject = 0.0f;
+
+  OhlSpectralRouter router;
+  REQUIRE(router.Init(p));
+
+  std::vector<float> l, rr;
+  Run(router, in, l, rr);
+
+  const double rear = 0.5 * (Rms(l, 2048) + Rms(rr, 2048));
+  MESSAGE("soft-ownership rear=" << rear
+          << " ownership=" << router.LastMetrics().meanOwnership);
+
+  CHECK(router.LastMetrics().meanOwnership > 0.003f);
+  CHECK(router.LastMetrics().meanOwnership < 0.20f);
+  CHECK(rear > 0.0005);
+}
