@@ -242,9 +242,9 @@ foreach ($pair in $musicUpgradeDefaults) {
   }
 }
 
-# v0.8 deliberately rebalances the two v0.7 stock safety values. Migrate ONLY exact
-# untouched v0.7 defaults; any user-tuned value is preserved.
-$configText = Get-Content $configDst -Raw
+# v0.8 changed two stock v0.7 safety values. Migrate ONLY exact untouched v0.7 defaults;
+# any user-tuned value is preserved. Keep this deliberately parser-simple.
+$configLines = @(Get-Content $configDst)
 $v08StockMigrations = @(
   @('music_diffuse_threshold', '0.18', '0.10'),
   @('music_rear_budget', '0.16', '0.22')
@@ -254,121 +254,17 @@ foreach ($triple in $v08StockMigrations) {
   $key = $triple[0]
   $old = $triple[1]
   $new = $triple[2]
-  $pattern = '(?m)^(\s*' + [regex]::Escape($key) + '\s*=\s*)' +
-             [regex]::Escape($old) + '(\s*)$exePath = Join-Path $InstallDir 'engine.exe'
-$logPath = Join-Path $InstallDir 'engine.log'
-$launcherPath = Join-Path $InstallDir 'OHL-Autostart.vbs'
-
-# One-shot hidden launcher. This is intentionally NOT a supervisor/watchdog: it starts the
-# exact installed OHL engine once, hidden, and exits immediately.
-Set-Content -Path $launcherPath -Encoding ASCII -Value @(
-  "' OHL Virtual AC3 Encoder one-shot hidden launcher."
-  'Set sh = CreateObject("WScript.Shell")'
-  'q = Chr(34)'
-  "appPath = ""$exePath"""
-  "logFile = ""$logPath"""
-  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
-)
-
-New-Item -ItemType Directory -Force -Path $startup | Out-Null
-New-Item -ItemType Directory -Force -Path $startMenuDir | Out-Null
-$ws = New-Object -ComObject WScript.Shell
-
-# One authoritative logon path. Windows Startup runs a tiny one-shot WScript launcher so
-# engine.exe gets no persistent console window. The launcher itself targets THIS exact OHL install.
-$wscriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
-$startupShortcut = $ws.CreateShortcut($ohlStartupLnk)
-$startupShortcut.TargetPath = $wscriptPath
-$startupShortcut.Arguments = '"' + $launcherPath + '"'
-$startupShortcut.WorkingDirectory = $InstallDir
-$startupShortcut.Description = 'OHL Virtual AC3 Encoder - hidden day-to-day engine'
-$startupShortcut.IconLocation = $exePath + ',0'
-$startupShortcut.Save()
-
-# Verify the authoritative startup entry points at our hidden launcher, not an old engine tree.
-$startupCheck = $ws.CreateShortcut($ohlStartupLnk)
-if (-not [string]::Equals($startupCheck.TargetPath, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase) -or
-    $startupCheck.Arguments -notlike "*$launcherPath*") {
-  throw "Startup shortcut verification failed. Expected WScript -> '$launcherPath'."
-}
-Write-Host "  startup target verified: $($startupCheck.TargetPath) $($startupCheck.Arguments)"
-
-$shortcut = $ws.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $exePath
-$shortcut.Arguments = '--switcher'
-$shortcut.WorkingDirectory = $InstallDir
-$shortcut.Description = 'OHL Virtual AC3 Encoder - Surround / Guitar mode switcher'
-$shortcut.Save()
-
-# Manual recovery shortcut: safe to click whenever the engine was exited/closed.
-$startShortcut = $ws.CreateShortcut($startShortcutPath)
-$startShortcut.TargetPath = $wscriptPath
-$startShortcut.Arguments = '"' + $launcherPath + '"'
-$startShortcut.WorkingDirectory = $InstallDir
-$startShortcut.Description = 'Start OHL Virtual AC3 Encoder hidden'
-$startShortcut.IconLocation = $exePath + ',0'
-$startShortcut.Save()
-
-Write-Host "Installed engine -> $InstallDir"
-Write-Host "Preserved config  -> $configDst"
-Write-Host "Tray control      -> enabled"
-Write-Host "Mode shortcut     -> $shortcutPath"
-Write-Host "Start shortcut    -> $startShortcutPath"
-Write-Host "Authoritative startup -> $ohlStartupLnk"
-Write-Host ''
-Write-Host 'Preflight: launching the staged engine directly...'
-
-# Run a tiny foreground preflight before hiding it behind wscript. If Windows cannot load the EXE
-# at all (for example a missing VC runtime DLL), main() never runs and engine.log cannot exist.
-$preflight = Start-Process -FilePath $exePath -ArgumentList '--version' -WorkingDirectory $InstallDir -Wait -PassThru
-if ($preflight.ExitCode -ne 0) {
-  $hex = ('0x{0:X8}' -f ([uint32]$preflight.ExitCode))
-  throw "engine.exe failed before daemon startup. Exit code: $($preflight.ExitCode) ($hex). This is usually a loader/dependency problem; the build should include its MSVC runtime DLLs."
-}
-
-Write-Host 'Preflight passed.'
-Write-Host 'Starting background engine directly...'
-
-# Launch the real daemon directly. Logon autostart uses the OHL Startup shortcut created above;
-# there is no WScript supervisor in the day-to-day path anymore.
-$daemonArgs = '--hidden --log "' + $logPath + '"'
-$daemon = Start-Process -FilePath $exePath -ArgumentList $daemonArgs -WorkingDirectory $InstallDir -WindowStyle Hidden -PassThru
-Start-Sleep -Seconds 2
-
-if ($daemon.HasExited) {
-  $exitCode = $daemon.ExitCode
-  $hex = ('0x{0:X8}' -f ([uint32]$exitCode))
-  if (Test-Path $logPath) {
-    Write-Host ''
-    Write-Host '----- engine.log -----'
-    Get-Content $logPath -Tail 120 | ForEach-Object { Write-Host $_ }
-    Write-Host '----------------------'
-    throw "engine.exe exited during daemon startup. Exit code: $exitCode ($hex). The last engine.log lines are above."
-  }
-  throw "engine.exe exited during daemon startup with exit code $exitCode ($hex), and no engine.log was created."
-}
-
-$running = @(Get-CimInstance Win32_Process -Filter "Name='engine.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.ExecutablePath -like "$InstallDir*" }).Count -gt 0
-
-if (-not $running) {
-  throw "engine.exe was launched but could not be found in the process table after 2 seconds."
-}
-
-Write-Host ''
-Write-Host 'OHL Virtual AC3 Encoder is running.'
-Write-Host 'Use the notification-area icon to switch SURROUND / GUITAR modes.'
-
-  if ([regex]::IsMatch($configText, $pattern)) {
-    $configText = [regex]::Replace(
-      $configText, $pattern,
-      { param($m) $m.Groups[1].Value + $new + $m.Groups[2].Value })
-    $didV08Migration = $true
-    Write-Host "  migrated stock v0.7 $key=$old -> $new"
+  $pattern = '^\s*' + [regex]::Escape($key) + '\s*=\s*' + [regex]::Escape($old) + '\s*$'
+  for ($i = 0; $i -lt $configLines.Count; $i++) {
+    if ($configLines[$i] -match $pattern) {
+      $configLines[$i] = $key + '=' + $new
+      $didV08Migration = $true
+      Write-Host "  migrated stock v0.7 $key=$old -> $new"
+    }
   }
 }
 if ($didV08Migration) {
-  Set-Content -Path $configDst -Encoding UTF8 -Value $configText
+  Set-Content -Path $configDst -Encoding UTF8 -Value $configLines
 }
 
 $exePath = Join-Path $InstallDir 'engine.exe'
