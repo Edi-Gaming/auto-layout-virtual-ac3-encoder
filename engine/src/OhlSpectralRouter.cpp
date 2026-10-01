@@ -275,24 +275,45 @@ void OhlSpectralRouter::ProcessFrame()
     ownership_[k] = std::clamp(ownership_[k], 0.0f, 1.0f);
 
     const int band = BandForHz(hz);
-    const double steering = std::max(0.0f, params_.steering[static_cast<size_t>(band)]);
+    const size_t bandIx = static_cast<size_t>(band);
+    const double steering = std::max(0.0f, params_.steering[bandIx]);
     const double bandFrontLock =
         std::clamp(static_cast<double>(params_.globalFrontLock) *
-                   static_cast<double>(params_.frontLock[static_cast<size_t>(band)]) *
+                   static_cast<double>(params_.frontLock[bandIx]) *
                    centerScore, 0.0, 1.0);
     const double frontGain = 1.0 - bandFrontLock;
 
-    // A very small bed remains even before ownership is acquired; the owned component is dominant.
+    // Keep a tiny continuous width bed so rapid percussion cannot repeatedly gate the room to
+    // silence. Ownership is the stronger adaptive layer, but bins just below the hard acquire
+    // threshold get a deliberately small "soft ownership" contribution. This catches subtle
+    // room/air cues in sparse mixes without turning ambiguous content into rear mains.
     const double bed = static_cast<double>(params_.widthFloor) *
                        (0.10 + 0.22 * std::sqrt(sideFraction));
-    const double owned = static_cast<double>(params_.surroundGain) *
-                         static_cast<double>(ownership_[k]);
+
+    const double onSafe = std::max(on, 1.0e-6);
+    const double softStart = 0.45 * onSafe;
+    const double softEvidence = std::clamp(
+        (spatialScore - softStart) / std::max(1.0e-6, onSafe - softStart),
+        0.0, 1.0);
+    constexpr double kSoftOwnershipByBand[kBands] = {0.05, 0.09, 0.16, 0.22};
+    const double rescuedOwnership =
+        kSoftOwnershipByBand[bandIx] * softEvidence * (0.40 + 0.60 * diffuse);
+    const double effectiveOwnership =
+        std::max(static_cast<double>(ownership_[k]), rescuedOwnership);
+    const double owned = static_cast<double>(params_.surroundGain) * effectiveOwnership;
+
+    // A kick/snare/clap should suppress the adaptive rear event, but repeated hats and air-band
+    // transients must not chop the continuous bed. High-frequency transient evidence therefore
+    // receives progressively less weight; hard-pan evidence remains fully protective everywhere.
+    constexpr double kTransientProtectByBand[kBands] = {0.80, 0.62, 0.28, 0.08};
+    const double directEvidence = std::max(
+        hardPan, transient * kTransientProtectByBand[bandIx]);
     const double directGain =
-        1.0 - 0.55 * static_cast<double>(params_.directReject) *
-                    std::max(hardPan, transient);
+        1.0 - 0.55 * static_cast<double>(params_.directReject) * directEvidence;
+
     const double gain = std::max(
         0.0,
-        (bed + owned) * steering * frontGain * directGain * dimensionGain);
+        (bed + owned * directGain) * steering * frontGain * dimensionGain);
 
     const double leftShare = pL / (energy + kEps);
     const double rightShare = 1.0 - leftShare;
@@ -314,11 +335,11 @@ void OhlSpectralRouter::ProcessFrame()
     }
 
     const double w = std::sqrt(energy + 1.0e-18);
-    ownershipSum[static_cast<size_t>(band)] += w * ownership_[k];
-    centerSum[static_cast<size_t>(band)] += w * centerScore;
-    bandWeight[static_cast<size_t>(band)] += w;
+    ownershipSum[bandIx] += w * effectiveOwnership;
+    centerSum[bandIx] += w * centerScore;
+    bandWeight[bandIx] += w;
     eligible += w;
-    active += w * ownership_[k];
+    active += w * effectiveOwnership;
     transientWeighted += w * transient;
     transientWeight += w;
   }
