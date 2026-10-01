@@ -20,6 +20,7 @@
 #include "OhlMusicUpmixer.h"
 #include "MusicTelemetry.h"
 #include "MusicCaptureLogger.h"
+#include "SurroundTestState.h"
 #include "WasapiCapture.h" // CaptureFormat
 
 #include <audioclient.h>
@@ -82,6 +83,7 @@ public:
     std::array<double, 6> musicDistanceInches{{33.0, 33.0, 30.0, 33.0, 27.0, 33.0}};
     MusicTelemetry* musicTelemetry = nullptr;
     MusicCaptureLogger* musicCaptureLogger = nullptr;
+    SurroundTestState* surroundTestState = nullptr;
   };
 
   WasapiPassthrough() = default;
@@ -121,6 +123,7 @@ private:
   bool PacketHasNonFrontActivity(const uint8_t* in, double& peak) const;
   AutoPayload SelectAutoPayload(const uint8_t* in, bool haveRealInput);
   void ExtractFrontStereoFloat(const uint8_t* in, float* stereo) const;
+  bool RenderSurroundTest(float* out51);
 
   ComPtr<IMMDevice>          dev_;
   ComPtr<IAudioClient>       client_;
@@ -134,6 +137,7 @@ private:
   SpdifEncoder   enc51_;
   SpdifEncoder   encStereo_;
   SpdifEncoder   encMusic51_;
+  SpdifEncoder   encTest51_;
   OhlMusicUpmixer musicUpmixer_;
   int            framesPerPacket_ = 1536;
   static constexpr int kBurstBytes = SpdifEncoder::kMaxBytesPerPacket; // 6144
@@ -162,9 +166,20 @@ private:
   uint64_t engineFrameCounter_ = 0;
   uint64_t musicPacketSequence_ = 0;
 
+  // Surround Wizard oscillator/crossfade state. Only the render thread mutates these.
+  uint64_t testLastRevision_ = 0;
+  SurroundTestRoute testFromRoute_ = SurroundTestRoute::Off;
+  SurroundTestRoute testToRoute_ = SurroundTestRoute::Off;
+  int testFadePos_ = 0;
+  int testFadeSamples_ = 1;
+  double testPhase_ = 0.0;
+  double testFrequencyHz_ = 80.0;
+  double testAmplitude_ = 0.0316227766; // -30 dBFS
+
   std::vector<uint8_t> staging_; // one packet of capture frames
   std::vector<uint8_t> silence_; // same, zeroed
   std::vector<uint8_t> burst_;   // one IEC 61937 burst
   std::vector<float> musicStereo_; // one packet of extracted FL/FR float PCM
   std::vector<float> music51_;     // one packet of OHL Music 5.1 float PCM
+  std::vector<float> test51_;      // one packet of Surround Wizard discrete 5.1 float PCM
 };
