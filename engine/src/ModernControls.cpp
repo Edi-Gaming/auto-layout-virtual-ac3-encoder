@@ -400,7 +400,6 @@ LRESULT CALLBACK GroupProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       DeleteObject(bg);
 
       RECT card = r;
-      card.top += 7;
       FillRound(mem, card, 10, kCard);
       HPEN border = CreatePen(PS_SOLID, 1, kBorder);
       HGDIOBJ oldP = SelectObject(mem, border);
@@ -414,10 +413,9 @@ LRESULT CALLBACK GroupProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       GetWindowTextW(hwnd, text, 256);
       HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
       HGDIOBJ oldF = font ? SelectObject(mem, font) : nullptr;
-      SetBkMode(mem, OPAQUE);
-      SetBkColor(mem, kBg);
+      SetBkMode(mem, TRANSPARENT);
       SetTextColor(mem, kText);
-      RECT title{12, 0, r.right - 12, 22};
+      RECT title{12, 7, r.right - 12, 27};
       DrawTextW(mem, text, -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
       if (oldF) SelectObject(mem, oldF);
 
