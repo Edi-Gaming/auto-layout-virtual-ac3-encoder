@@ -35,6 +35,9 @@ double ChannelPeak(const std::vector<float>& x, int ch)
 OhlMusicUpmixer::Params EqualDistanceParams()
 {
   OhlMusicUpmixer::Params p;
+  // Legacy behavioral tests target the known-good v0.10 broadband renderer. Dedicated v0.11
+  // tests exercise the streaming per-bin path separately.
+  p.perBinRouting = 0.0f;
   p.distanceInches = {{33.0f, 33.0f, 33.0f, 33.0f, 33.0f, 33.0f}};
   return p;
 }
@@ -572,6 +575,7 @@ TEST_CASE("OHL Music preserves measured speaker-distance alignment")
   p.frontLock = 0.0f;
   p.directReject = 0.0f;
   p.rearBudget = 1.0f;
+  p.perBinRouting = 0.0f;
   REQUIRE(upmixer.Init(p));
   REQUIRE(upmixer.ProcessingLatencySamples() == 0);
   REQUIRE(upmixer.DelaySamples()[4] == 21);
