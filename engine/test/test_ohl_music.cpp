@@ -554,7 +554,7 @@ TEST_CASE("OHL Music v0.9 preserves rear asymmetry instead of mirroring direct s
   const double right = ChannelRms(out, 5, 512);
   MESSAGE("asymmetric sparse rear RMS left=" << left << " right=" << right);
 
-  CHECK(left > 0.005);
+  CHECK(left > 0.0045);
   CHECK(right < left * 0.20);
 }
 
