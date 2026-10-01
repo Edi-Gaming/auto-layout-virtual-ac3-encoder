@@ -183,4 +183,5 @@ private:
   std::array<float, 4> lastBandOwnership_{{0, 0, 0, 0}};
   std::array<float, 4> lastBandCenter_{{0, 0, 0, 0}};
   float lastRearBudgetScale_ = 1.0f;
+  bool spectralPrimed_ = false;
 };
