@@ -1207,6 +1207,26 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       return 0;
     }
 
+    case OHL_STAGE_DISTANCE_CHANGED:
+    {
+      if (!state) return 0;
+      const int speaker = static_cast<int>(wp);
+      const double inches = std::clamp(static_cast<double>(lp) / 100.0, 12.0, 120.0);
+
+      switch (static_cast<OhlStageSpeaker>(speaker))
+      {
+        case OhlStageSpeaker::FL: state->fl = inches; SetDoubleEdit(hwnd, kFl, inches); break;
+        case OhlStageSpeaker::C:  state->c  = inches; SetDoubleEdit(hwnd, kC, inches); break;
+        case OhlStageSpeaker::FR: state->fr = inches; SetDoubleEdit(hwnd, kFr, inches); break;
+        case OhlStageSpeaker::SL: state->sl = inches; SetDoubleEdit(hwnd, kSl, inches); break;
+        case OhlStageSpeaker::SR: state->sr = inches; SetDoubleEdit(hwnd, kSr, inches); break;
+      }
+
+      UpdateOhlStageVisual(GetDlgItem(hwnd, kStageViz), StageDistances(*state), gLastUiMetrics);
+      SetDlgItemTextW(hwnd, kStatus, L"Speaker distance changed on stage. Press APPLY LIVE to audition geometry.");
+      return 0;
+    }
+
     case WM_HSCROLL:
       UpdateSliderLabels(hwnd);
       return 0;
@@ -1215,6 +1235,26 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
       const int id = LOWORD(wp);
       if (!state) break;
+
+      if (id == kViewMix)
+      {
+        SetUiPage(hwnd, true);
+        return 0;
+      }
+      if (id == kViewLab)
+      {
+        SetUiPage(hwnd, false);
+        return 0;
+      }
+      if (id == kEnable)
+      {
+        const LRESULT checked = SendDlgItemMessageW(hwnd, kEnable, BM_GETCHECK, 0, 0);
+        SendDlgItemMessageW(
+            hwnd, kEnable, BM_SETCHECK,
+            checked == BST_CHECKED ? BST_UNCHECKED : BST_CHECKED, 0);
+        SetDlgItemTextW(hwnd, kStatus, L"OHL Music enable state changed. Press APPLY LIVE to commit.");
+        return 0;
+      }
 
       if (id == kApply)
       {
@@ -1342,6 +1382,7 @@ int RunMusicSettingsGui(const std::string& configPath)
 
   HINSTANCE instance = GetModuleHandleW(nullptr);
   if (!RegisterOhlModernControls(instance) ||
+      !RegisterOhlMacroKnob(instance) ||
       !RegisterOhlAnalyzerVisual(instance) ||
       !RegisterOhlStageVisual(instance))
     return 1;
@@ -1363,7 +1404,7 @@ int RunMusicSettingsGui(const std::string& configPath)
   HWND hwnd = CreateWindowExW(
       0, kClassName, L"OHL Music Spatial Lab",
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
-      CW_USEDEFAULT, CW_USEDEFAULT, 1120, 965,
+      CW_USEDEFAULT, CW_USEDEFAULT, 1180, 900,
       nullptr, nullptr, instance, &state);
 
   if (!hwnd)
