@@ -273,8 +273,13 @@ OhlSpatialAnalyzer::Metrics OhlSpatialAnalyzer::Analyze(const float* stereo, siz
     {
       activeSpatialWeight += w;
       const double leftShare = a.pL / (energy + kEps);
-      spatialLeft += w * spatialScore * leftShare;
-      spatialRight += w * spatialScore * (1.0 - leftShare);
+
+      // Ambience confidence intentionally compresses loudness so subtle spatial bins are not hidden
+      // by a loud center. Directionality should do the opposite: if one spatial component is much
+      // stronger, its side should actually win. Use sqrt-energy here rather than fourth-root energy.
+      const double directionWeight = freqWeight * std::sqrt(energy + 1.0e-18);
+      spatialLeft += directionWeight * spatialScore * leftShare;
+      spatialRight += directionWeight * spatialScore * (1.0 - leftShare);
     }
 
     const double positivePhase =
