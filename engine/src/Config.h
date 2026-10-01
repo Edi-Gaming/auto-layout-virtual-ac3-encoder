@@ -1,6 +1,7 @@
 // Config.h — engine runtime configuration (CLI-driven for now; file-based in Phase 4).
 #pragma once
 
+#include <array>
 #include <string>
 
 struct Config
