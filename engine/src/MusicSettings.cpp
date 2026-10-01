@@ -25,6 +25,8 @@ enum ControlId
   kEnable = 3001,
   kAmbience,
   kWidth,
+  kSpectralIntelligence,
+  kSpatialBinThreshold,
   kFrontLock,
   kDiffuseThreshold,
   kRearBudget,
@@ -33,6 +35,7 @@ enum ControlId
 
   kAmbienceValue,
   kWidthValue,
+  kSpectralIntelligenceValue,
   kFrontLockValue,
   kRejectValue,
   kCenterValue,
@@ -88,6 +91,8 @@ struct SettingsState
   double highWeight = 0.46;
   double ambienceAttackMs = 100.0;
   double ambienceReleaseMs = 520.0;
+  double spectralIntelligence = 0.90;
+  double spatialBinThreshold = 0.30;
 
   double frontLock = 0.88;
   double diffuseThreshold = 0.10;
@@ -160,6 +165,10 @@ void LoadState(SettingsState& s)
   s.highWeight = ReadDouble(v, "music_ambience_high_weight", s.highWeight);
   s.ambienceAttackMs = ReadDouble(v, "music_ambience_attack_ms", s.ambienceAttackMs);
   s.ambienceReleaseMs = ReadDouble(v, "music_ambience_release_ms", s.ambienceReleaseMs);
+  s.spectralIntelligence =
+      ReadDouble(v, "music_spectral_intelligence", s.spectralIntelligence);
+  s.spatialBinThreshold =
+      ReadDouble(v, "music_spatial_bin_threshold", s.spatialBinThreshold);
 
   s.frontLock = ReadDouble(v, "music_front_lock", s.frontLock);
   s.diffuseThreshold = ReadDouble(v, "music_diffuse_threshold", s.diffuseThreshold);
@@ -333,6 +342,7 @@ void UpdateSliderLabels(HWND hwnd)
   };
   pct(kAmbience, kAmbienceValue);
   pct(kWidth, kWidthValue);
+  pct(kSpectralIntelligence, kSpectralIntelligenceValue);
   pct(kFrontLock, kFrontLockValue);
   pct(kReject, kRejectValue);
   pct(kCenter, kCenterValue);
@@ -347,6 +357,8 @@ void PushStateToControls(HWND hwnd, const SettingsState& s)
 
   SendDlgItemMessageW(hwnd, kAmbience, TBM_SETPOS, TRUE, PercentToSlider(s.ambience));
   SendDlgItemMessageW(hwnd, kWidth, TBM_SETPOS, TRUE, PercentToSlider(s.width));
+  SendDlgItemMessageW(hwnd, kSpectralIntelligence, TBM_SETPOS, TRUE,
+                      PercentToSlider(s.spectralIntelligence));
   SendDlgItemMessageW(hwnd, kFrontLock, TBM_SETPOS, TRUE, PercentToSlider(s.frontLock));
   SendDlgItemMessageW(hwnd, kReject, TBM_SETPOS, TRUE, PercentToSlider(s.directReject));
   SendDlgItemMessageW(hwnd, kCenter, TBM_SETPOS, TRUE, PercentToSlider(s.center));
@@ -357,6 +369,7 @@ void PushStateToControls(HWND hwnd, const SettingsState& s)
 
   SetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs, 0);
   SetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs, 0);
+  SetDoubleEdit(hwnd, kSpatialBinThreshold, s.spatialBinThreshold, 2);
   SetDoubleEdit(hwnd, kDiffuseThreshold, s.diffuseThreshold, 2);
   SetDoubleEdit(hwnd, kRearBudget, s.rearBudget, 2);
   SetDoubleEdit(hwnd, kDirectThreshold, s.directThreshold, 2);
@@ -385,6 +398,10 @@ void PullControlsToState(HWND hwnd, SettingsState& s)
       static_cast<double>(SendDlgItemMessageW(hwnd, kAmbience, TBM_GETPOS, 0, 0)) / 100.0;
   s.width =
       static_cast<double>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0)) / 100.0;
+  s.spectralIntelligence =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kSpectralIntelligence, TBM_GETPOS, 0, 0)) / 100.0;
+  s.spatialBinThreshold =
+      std::clamp(GetDoubleEdit(hwnd, kSpatialBinThreshold, s.spatialBinThreshold), 0.0, 1.0);
   s.frontLock =
       static_cast<double>(SendDlgItemMessageW(hwnd, kFrontLock, TBM_GETPOS, 0, 0)) / 100.0;
   s.diffuseThreshold =
@@ -439,6 +456,8 @@ void SetPreset(SettingsState& s, int preset)
       s.highWeight = 0.53;
       s.ambienceAttackMs = 125;
       s.ambienceReleaseMs = 650;
+      s.spectralIntelligence = 0.95;
+      s.spatialBinThreshold = 0.34;
       s.frontLock = 0.94;
       s.diffuseThreshold = 0.14;
       s.rearBudget = 0.18;
@@ -462,6 +481,8 @@ void SetPreset(SettingsState& s, int preset)
       s.highWeight = 0.50;
       s.ambienceAttackMs = 90;
       s.ambienceReleaseMs = 520;
+      s.spectralIntelligence = 0.88;
+      s.spatialBinThreshold = 0.26;
       s.frontLock = 0.88;
       s.diffuseThreshold = 0.08;
       s.rearBudget = 0.26;
@@ -485,6 +506,8 @@ void SetPreset(SettingsState& s, int preset)
       s.highWeight = 0.62;
       s.ambienceAttackMs = 170;
       s.ambienceReleaseMs = 900;
+      s.spectralIntelligence = 1.00;
+      s.spatialBinThreshold = 0.24;
       s.frontLock = 0.96;
       s.diffuseThreshold = 0.06;
       s.rearBudget = 0.28;
@@ -509,6 +532,8 @@ void SetPreset(SettingsState& s, int preset)
       s.highWeight = 0.46;
       s.ambienceAttackMs = 100;
       s.ambienceReleaseMs = 520;
+      s.spectralIntelligence = 0.90;
+      s.spatialBinThreshold = 0.30;
       s.frontLock = 0.90;
       s.diffuseThreshold = 0.10;
       s.rearBudget = 0.22;
@@ -540,6 +565,8 @@ void Apply(HWND hwnd, SettingsState& state)
   values["music_ambience_high_weight"] = Fmt(state.highWeight);
   values["music_ambience_attack_ms"] = Fmt(state.ambienceAttackMs, 0);
   values["music_ambience_release_ms"] = Fmt(state.ambienceReleaseMs, 0);
+  values["music_spectral_intelligence"] = Fmt(state.spectralIntelligence);
+  values["music_spatial_bin_threshold"] = Fmt(state.spatialBinThreshold);
   values["music_front_lock"] = Fmt(state.frontLock);
   values["music_diffuse_threshold"] = Fmt(state.diffuseThreshold);
   values["music_rear_budget"] = Fmt(state.rearBudget);
@@ -604,7 +631,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.9 linear M/S ambience — clean rear space, no nonlinear waveform carving.",
+      Label(hwnd, L"v0.10 spectral intelligence — per-bin spatial recognition on the clean M/S renderer.",
             21, 48, 710, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
@@ -620,7 +647,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Button(hwnd, kPresetAmbient, L"AMBIENT", 545, 73, 88);
       Button(hwnd, kPresetV03, L"BASE", 639, 73, 64);
 
-      Group(hwnd, L"Spatial field", 14, 108, 722, 260);
+      Group(hwnd, L"Spatial field", 14, 108, 722, 300);
       Label(hwnd, L"Adaptive ambience", 30, 136, 150, 22);
       Slider(hwnd, kAmbience, 180, 129, 445, 120, PercentToSlider(state->ambience));
       ValueLabel(hwnd, kAmbienceValue, 642, 136);
@@ -640,76 +667,83 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Slider(hwnd, kHighWeight, 557, 230, 110, 150, PercentToSlider(state->highWeight));
       ValueLabel(hwnd, kHighWeightValue, 670, 237, 52);
 
-      Label(hwnd, L"Steering attack", 30, 286, 105, 22);
-      Edit(hwnd, kAmbienceAttack, 137, 282, 72);
-      Label(hwnd, L"ms", 213, 286, 25, 22, true);
-      Label(hwnd, L"release", 265, 286, 55, 22);
-      Edit(hwnd, kAmbienceRelease, 323, 282, 72);
-      Label(hwnd, L"ms", 399, 286, 25, 22, true);
-      Label(hwnd, L"Attack = how fast ambience opens; release = how long the room stays open.",
-            30, 321, 650, 20, true);
+      Label(hwnd, L"Spectral intelligence", 30, 282, 150, 22);
+      Slider(hwnd, kSpectralIntelligence, 180, 275, 335, 100,
+             PercentToSlider(state->spectralIntelligence));
+      ValueLabel(hwnd, kSpectralIntelligenceValue, 520, 282, 60);
+      Label(hwnd, L"Bin selectivity", 588, 282, 88, 22, true);
+      Edit(hwnd, kSpatialBinThreshold, 676, 278, 48);
 
-      Group(hwnd, L"Front anchoring / direct events", 14, 376, 722, 198);
-      Label(hwnd, L"Front / vocal lock", 30, 404, 150, 22);
-      Slider(hwnd, kFrontLock, 180, 397, 445, 100, PercentToSlider(state->frontLock));
-      ValueLabel(hwnd, kFrontLockValue, 642, 404);
+      Label(hwnd, L"Steering attack", 30, 326, 105, 22);
+      Edit(hwnd, kAmbienceAttack, 137, 322, 72);
+      Label(hwnd, L"ms", 213, 326, 25, 22, true);
+      Label(hwnd, L"release", 265, 326, 55, 22);
+      Edit(hwnd, kAmbienceRelease, 323, 322, 72);
+      Label(hwnd, L"ms", 399, 326, 25, 22, true);
+      Label(hwnd, L"Intelligence = FFT classifier blend; selectivity = spatial-bin confidence threshold.",
+            30, 361, 680, 20, true);
 
-      Label(hwnd, L"Diffuse gate", 30, 445, 88, 22);
-      Edit(hwnd, kDiffuseThreshold, 120, 441, 72);
-      Label(hwnd, L"0 = always open; higher = only diffuse/room-like material", 201, 445, 360, 22, true);
-      Label(hwnd, L"Rear budget", 575, 445, 80, 22);
-      Edit(hwnd, kRearBudget, 656, 441, 58);
-      Label(hwnd, L"ratio", 716, 445, 35, 22, true);
+      Group(hwnd, L"Front anchoring / direct events", 14, 416, 722, 198);
+      Label(hwnd, L"Front / vocal lock", 30, 444, 150, 22);
+      Slider(hwnd, kFrontLock, 180, 437, 445, 100, PercentToSlider(state->frontLock));
+      ValueLabel(hwnd, kFrontLockValue, 642, 444);
 
-      Label(hwnd, L"Direct-event reject", 30, 484, 150, 22);
-      Slider(hwnd, kReject, 180, 477, 445, 100, PercentToSlider(state->directReject));
-      ValueLabel(hwnd, kRejectValue, 642, 484);
+      Label(hwnd, L"Diffuse gate", 30, 485, 88, 22);
+      Edit(hwnd, kDiffuseThreshold, 120, 481, 72);
+      Label(hwnd, L"0 = always open; higher = only diffuse/room-like material", 201, 485, 360, 22, true);
+      Label(hwnd, L"Rear budget", 575, 485, 80, 22);
+      Edit(hwnd, kRearBudget, 656, 481, 58);
+      Label(hwnd, L"ratio", 716, 485, 35, 22, true);
 
-      Label(hwnd, L"Sensitivity ratio", 30, 527, 105, 22);
-      Edit(hwnd, kDirectThreshold, 137, 523, 72);
-      Label(hwnd, L"(lower = catches more)", 214, 527, 130, 22, true);
-      Label(hwnd, L"Recovery", 405, 527, 62, 22);
-      Edit(hwnd, kDirectRecovery, 470, 523, 72);
-      Label(hwnd, L"ms", 546, 527, 25, 22, true);
+      Label(hwnd, L"Direct-event reject", 30, 524, 150, 22);
+      Slider(hwnd, kReject, 180, 517, 445, 100, PercentToSlider(state->directReject));
+      ValueLabel(hwnd, kRejectValue, 642, 524);
 
-      Group(hwnd, L"Speaker voicing", 14, 582, 722, 142);
-      Label(hwnd, L"Center sparkle", 30, 610, 150, 22);
-      Slider(hwnd, kCenter, 180, 603, 445, 50, PercentToSlider(state->center));
-      ValueLabel(hwnd, kCenterValue, 642, 610);
+      Label(hwnd, L"Sensitivity ratio", 30, 567, 105, 22);
+      Edit(hwnd, kDirectThreshold, 137, 563, 72);
+      Label(hwnd, L"(lower = catches more)", 214, 567, 130, 22, true);
+      Label(hwnd, L"Recovery", 405, 567, 62, 22);
+      Edit(hwnd, kDirectRecovery, 470, 563, 72);
+      Label(hwnd, L"ms", 546, 567, 25, 22, true);
 
-      Label(hwnd, L"Center band", 30, 652, 88, 22);
-      Edit(hwnd, kCenterHp, 120, 648, 72);
-      Label(hwnd, L"—", 197, 652, 15, 22);
-      Edit(hwnd, kCenterLp, 215, 648, 76);
-      Label(hwnd, L"Hz", 295, 652, 25, 22, true);
+      Group(hwnd, L"Speaker voicing", 14, 622, 722, 142);
+      Label(hwnd, L"Center sparkle", 30, 650, 150, 22);
+      Slider(hwnd, kCenter, 180, 643, 445, 50, PercentToSlider(state->center));
+      ValueLabel(hwnd, kCenterValue, 642, 650);
 
-      Label(hwnd, L"Rear band", 348, 652, 72, 22);
-      Edit(hwnd, kRearHp, 423, 648, 70);
-      Label(hwnd, L"—", 497, 652, 15, 22);
-      Edit(hwnd, kRearLp, 515, 648, 76);
-      Label(hwnd, L"Hz", 595, 652, 25, 22, true);
+      Label(hwnd, L"Center band", 30, 692, 88, 22);
+      Edit(hwnd, kCenterHp, 120, 688, 72);
+      Label(hwnd, L"—", 197, 692, 15, 22);
+      Edit(hwnd, kCenterLp, 215, 688, 76);
+      Label(hwnd, L"Hz", 295, 692, 25, 22, true);
 
-      Label(hwnd, L"SL trim", 30, 689, 52, 22);
-      Edit(hwnd, kRearLeftTrim, 84, 685, 65);
-      Label(hwnd, L"SR trim", 178, 689, 52, 22);
-      Edit(hwnd, kRearRightTrim, 232, 685, 65);
-      Label(hwnd, L"1.00 = unity. Useful for room/speaker asymmetry.", 320, 689, 350, 20, true);
+      Label(hwnd, L"Rear band", 348, 692, 72, 22);
+      Edit(hwnd, kRearHp, 423, 688, 70);
+      Label(hwnd, L"—", 497, 692, 15, 22);
+      Edit(hwnd, kRearLp, 515, 688, 76);
+      Label(hwnd, L"Hz", 595, 692, 25, 22, true);
 
-      Group(hwnd, L"Geometry / time alignment", 14, 732, 722, 78);
-      Label(hwnd, L"FL", 30, 762, 24, 22); Edit(hwnd, kFl, 54, 758, 58);
-      Label(hwnd, L"C", 133, 762, 18, 22); Edit(hwnd, kC, 151, 758, 58);
-      Label(hwnd, L"FR", 229, 762, 24, 22); Edit(hwnd, kFr, 253, 758, 58);
-      Label(hwnd, L"SL", 331, 762, 24, 22); Edit(hwnd, kSl, 355, 758, 58);
-      Label(hwnd, L"SR", 433, 762, 24, 22); Edit(hwnd, kSr, 457, 758, 58);
-      Label(hwnd, L"inches from listening position", 530, 762, 175, 22, true);
+      Label(hwnd, L"SL trim", 30, 729, 52, 22);
+      Edit(hwnd, kRearLeftTrim, 84, 725, 65);
+      Label(hwnd, L"SR trim", 178, 729, 52, 22);
+      Edit(hwnd, kRearRightTrim, 232, 725, 65);
+      Label(hwnd, L"1.00 = unity. Useful for room/speaker asymmetry.", 320, 729, 350, 20, true);
 
-      HWND apply = Button(hwnd, kApply, L"APPLY LIVE", 20, 828, 150, 42);
+      Group(hwnd, L"Geometry / time alignment", 14, 772, 722, 78);
+      Label(hwnd, L"FL", 30, 802, 24, 22); Edit(hwnd, kFl, 54, 798, 58);
+      Label(hwnd, L"C", 133, 802, 18, 22); Edit(hwnd, kC, 151, 798, 58);
+      Label(hwnd, L"FR", 229, 802, 24, 22); Edit(hwnd, kFr, 253, 798, 58);
+      Label(hwnd, L"SL", 331, 802, 24, 22); Edit(hwnd, kSl, 355, 798, 58);
+      Label(hwnd, L"SR", 433, 802, 24, 22); Edit(hwnd, kSr, 457, 798, 58);
+      Label(hwnd, L"inches from listening position", 530, 802, 175, 22, true);
+
+      HWND apply = Button(hwnd, kApply, L"APPLY LIVE", 20, 868, 150, 42);
       SendMessageW(apply, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-      Button(hwnd, kReload, L"RELOAD SAVED", 180, 828, 145, 42);
+      Button(hwnd, kReload, L"RELOAD SAVED", 180, 868, 145, 42);
 
       HWND status = CreateWindowW(L"STATIC", L"Presets are non-destructive until Apply Live.",
                                   WS_CHILD | WS_VISIBLE,
-                                  344, 838, 380, 30, hwnd,
+                                  344, 878, 380, 30, hwnd,
                                   reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatus)),
                                   nullptr, nullptr);
       SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
@@ -808,7 +842,7 @@ int RunMusicSettingsGui(const std::string& configPath)
   HWND hwnd = CreateWindowExW(
       0, kClassName, L"OHL Music Spatial Lab",
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-      CW_USEDEFAULT, CW_USEDEFAULT, 770, 925,
+      CW_USEDEFAULT, CW_USEDEFAULT, 770, 965,
       nullptr, nullptr, instance, &state);
 
   if (!hwnd)
