@@ -42,11 +42,18 @@ enum ControlId
   kQ160,
   kQ200,
   kQ500,
-  kQ1000
+  kQ1000,
+  kChannelWalk,
+  kBassMatrix,
+  kFlLfeAb,
+  kFlLfeM10,
+  kFlLfeInv
 };
 
 constexpr UINT_PTR kSweepTimer = 23;
+constexpr UINT_PTR kAutoTimer = 24;
 constexpr int kSweepMs = 1500;
+constexpr int kAutoMs = 1300;
 constexpr std::array<int, 7> kSweepFull{{40, 60, 80, 100, 120, 160, 200}};
 constexpr std::array<int, 5> kSweepLfe{{40, 60, 80, 100, 120}};
 
@@ -57,6 +64,19 @@ HFONT gSmall = nullptr;
 std::string gRoute;
 bool gSweep = false;
 size_t gSweepIndex = 0;
+
+enum class AutoMode
+{
+  None,
+  ChannelWalk,
+  BassMatrix,
+  FlLfeAb
+};
+
+AutoMode gAutoMode = AutoMode::None;
+size_t gAutoIndex = 0;
+constexpr std::array<const char*, 5> kChannelWalkRoutes{{"fl", "c", "fr", "sr", "sl"}};
+constexpr std::array<const char*, 5> kBassMatrixRoutes{{"fl", "c", "fr", "sl", "sr"}};
 
 std::map<std::string, std::string> ParseFields(const std::string& text)
 {
@@ -89,7 +109,8 @@ double LevelDb(HWND hwnd)
 
 bool IsLfeRoute(const std::string& route)
 {
-  return route == "lfe" || route == "fl+lfe";
+  return route == "lfe" || route == "fl+lfe" ||
+         route == "fl+lfe-10" || route == "fl+lfe-inv";
 }
 
 void UpdateValueLabels(HWND hwnd)
@@ -136,9 +157,20 @@ void StopSweep(HWND hwnd)
   }
 }
 
+void StopAuto(HWND hwnd)
+{
+  if (gAutoMode != AutoMode::None)
+  {
+    KillTimer(hwnd, kAutoTimer);
+    gAutoMode = AutoMode::None;
+    gAutoIndex = 0;
+  }
+}
+
 void StopTest(HWND hwnd, bool updateUi = true)
 {
   StopSweep(hwnd);
+  StopAuto(hwnd);
   std::string response;
   SendModeCommand("test stop", response, 500);
   gRoute.clear();
@@ -242,6 +274,72 @@ void AdvanceSweep(HWND hwnd)
 
   UpdateValueLabels(hwnd);
   StartRoute(hwnd, gRoute, true);
+}
+
+void StartAutoMode(HWND hwnd, AutoMode mode)
+{
+  StopSweep(hwnd);
+  StopAuto(hwnd);
+  gAutoMode = mode;
+  gAutoIndex = 0;
+
+  if (mode == AutoMode::ChannelWalk)
+  {
+    SendDlgItemMessageW(hwnd, kFreq, TBM_SETPOS, TRUE, 1000);
+    UpdateValueLabels(hwnd);
+    StartRoute(hwnd, kChannelWalkRoutes[0], true);
+    SetStatus(hwnd, L"CHANNEL WALK — FL → C → FR → SR → SL @ 1 kHz");
+  }
+  else if (mode == AutoMode::BassMatrix)
+  {
+    int hz = Freq(hwnd);
+    if (hz > 200)
+    {
+      hz = 80;
+      SendDlgItemMessageW(hwnd, kFreq, TBM_SETPOS, TRUE, hz);
+      UpdateValueLabels(hwnd);
+    }
+    StartRoute(hwnd, kBassMatrixRoutes[0], true);
+    SetStatus(hwnd, L"BASS MATRIX — FL → C → FR → SL → SR");
+  }
+  else if (mode == AutoMode::FlLfeAb)
+  {
+    int hz = Freq(hwnd);
+    if (hz > 120)
+    {
+      hz = 80;
+      SendDlgItemMessageW(hwnd, kFreq, TBM_SETPOS, TRUE, hz);
+      UpdateValueLabels(hwnd);
+    }
+    StartRoute(hwnd, "fl", true);
+    SetStatus(hwnd, L"A/B — FL redirected bass ↔ discrete LFE");
+  }
+
+  SetTimer(hwnd, kAutoTimer, kAutoMs, nullptr);
+}
+
+void AdvanceAuto(HWND hwnd)
+{
+  switch (gAutoMode)
+  {
+    case AutoMode::ChannelWalk:
+      gAutoIndex = (gAutoIndex + 1) % kChannelWalkRoutes.size();
+      StartRoute(hwnd, kChannelWalkRoutes[gAutoIndex], true);
+      break;
+
+    case AutoMode::BassMatrix:
+      gAutoIndex = (gAutoIndex + 1) % kBassMatrixRoutes.size();
+      StartRoute(hwnd, kBassMatrixRoutes[gAutoIndex], true);
+      break;
+
+    case AutoMode::FlLfeAb:
+      gAutoIndex = (gAutoIndex + 1) % 2;
+      StartRoute(hwnd, gAutoIndex == 0 ? "fl" : "lfe", true);
+      break;
+
+    case AutoMode::None:
+      break;
+  }
 }
 
 HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool useSmall = false)
@@ -396,10 +494,25 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             L"500 Hz / 1 kHz = channel ID.  40–200 Hz = bass routing.  LFE is capped at 120 Hz.",
             495, 421, 165, 48, true);
 
+      HWND characterize = CreateWindowW(
+          kOhlGroupClass, L"Characterize",
+          WS_CHILD | WS_VISIBLE,
+          20, 500, 765, 112, hwnd, nullptr, nullptr, nullptr);
+      SendMessageW(characterize, WM_SETFONT, reinterpret_cast<WPARAM>(gUi), TRUE);
+
+      Button(hwnd, kChannelWalk, L"CHANNEL WALK 1 kHz", 38, 535, 150, 34);
+      Button(hwnd, kBassMatrix, L"BASS MATRIX", 198, 535, 125, 34);
+      Button(hwnd, kFlLfeAb, L"FL ↔ LFE A/B", 333, 535, 125, 34);
+      Button(hwnd, kFlLfeM10, L"FL + LFE -10 dB", 468, 535, 135, 34);
+      Button(hwnd, kFlLfeInv, L"FL + LFE 180°", 613, 535, 140, 34);
+
       Label(hwnd,
-            L"Channel ID: use 1 kHz, then click FL/C/FR/SL/SR. Bass probe: use 40–200 Hz. "
-            L"Closing this window stops the test and restores OHL Music.",
-            20, 510, 760, 44, true);
+            L"Automated walks use conservative level.  -10 dB checks LFE calibration; 180° checks crossover phase interaction.",
+            38, 578, 715, 24, true);
+
+      Label(hwnd,
+            L"Closing this window stops all diagnostics and restores normal OHL Music.",
+            20, 625, 760, 24, true);
 
       UpdateValueLabels(hwnd);
 
@@ -471,6 +584,11 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case kQ200: SetQuickFrequency(hwnd, 200); return 0;
         case kQ500: SetQuickFrequency(hwnd, 500); return 0;
         case kQ1000: SetQuickFrequency(hwnd, 1000); return 0;
+        case kChannelWalk: StartAutoMode(hwnd, AutoMode::ChannelWalk); return 0;
+        case kBassMatrix: StartAutoMode(hwnd, AutoMode::BassMatrix); return 0;
+        case kFlLfeAb: StartAutoMode(hwnd, AutoMode::FlLfeAb); return 0;
+        case kFlLfeM10: StartRoute(hwnd, "fl+lfe-10"); return 0;
+        case kFlLfeInv: StartRoute(hwnd, "fl+lfe-inv"); return 0;
       }
       break;
     }
@@ -479,6 +597,11 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       if (wp == kSweepTimer)
       {
         AdvanceSweep(hwnd);
+        return 0;
+      }
+      if (wp == kAutoTimer)
+      {
+        AdvanceAuto(hwnd);
         return 0;
       }
       break;
@@ -507,6 +630,7 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_DESTROY:
       StopSweep(hwnd);
+      StopAuto(hwnd);
       if (gTitle) { DeleteObject(gTitle); gTitle = nullptr; }
       if (gUi) { DeleteObject(gUi); gUi = nullptr; }
       if (gSmall) { DeleteObject(gSmall); gSmall = nullptr; }
@@ -547,7 +671,7 @@ int RunSurroundWizardGui()
   HWND hwnd = CreateWindowExW(
       0, kClassName, L"OHL Surround Wizard",
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-      CW_USEDEFAULT, CW_USEDEFAULT, 820, 605,
+      CW_USEDEFAULT, CW_USEDEFAULT, 820, 700,
       nullptr, nullptr, instance, nullptr);
   if (!hwnd)
     return 1;
