@@ -53,13 +53,6 @@ double CenterConfidence(const BandStats& b)
   return std::clamp(positiveCorr * balance, 0.0, 1.0);
 }
 
-float SharedSamePolarity(float l, float r)
-{
-  if ((l > 0.0f && r > 0.0f) || (l < 0.0f && r < 0.0f))
-    return std::copysign(std::min(std::fabs(l), std::fabs(r)), l);
-  return 0.0f;
-}
-
 double AmbienceScore(const BandStats& b)
 {
   const double corr = BandCorrelation(b);
@@ -182,6 +175,26 @@ float OhlMusicUpmixer::EnvelopeFollower::Process(float x)
   return value;
 }
 
+void OhlMusicUpmixer::Allpass1::Configure(float coefficient)
+{
+  a = std::clamp(coefficient, -0.95f, 0.95f);
+}
+
+void OhlMusicUpmixer::Allpass1::Reset()
+{
+  x1 = 0.0f;
+  y1 = 0.0f;
+}
+
+float OhlMusicUpmixer::Allpass1::Process(float x)
+{
+  // First-order all-pass: flat magnitude response, frequency-dependent phase only.
+  const float y = -a * x + x1 + a * y1;
+  x1 = x;
+  y1 = y;
+  return y;
+}
+
 bool OhlMusicUpmixer::Init(const Params& params)
 {
   if (params.sampleRate <= 0 ||
@@ -241,6 +254,14 @@ bool OhlMusicUpmixer::Init(const Params& params)
   rearHpR_.Configure(params_.rearHighpassHz, params_.sampleRate);
   rearLpL_.Configure(params_.rearLowpassHz, params_.sampleRate);
   rearLpR_.Configure(params_.rearLowpassHz, params_.sampleRate);
+
+  // Two intentionally different short phase networks. They are all-pass, so they do not alter
+  // magnitude or create amplitude modulation; they only stop SL/SR from being coherent copies.
+  rearDecorL_[0].Configure(0.43f);
+  rearDecorL_[1].Configure(-0.61f);
+  rearDecorR_[0].Configure(-0.37f);
+  rearDecorR_[1].Configure(0.69f);
+
   centerHp_.Configure(params_.centerTrebleHz, params_.sampleRate);
   centerLp_.Configure(params_.centerLowpassHz, params_.sampleRate);
 
@@ -266,6 +287,8 @@ void OhlMusicUpmixer::Reset()
   rearHpR_.Reset();
   rearLpL_.Reset();
   rearLpR_.Reset();
+  for (auto& ap : rearDecorL_) ap.Reset();
+  for (auto& ap : rearDecorR_) ap.Reset();
   centerHp_.Reset();
   centerLp_.Reset();
   eventFast_.Reset();
@@ -349,6 +372,7 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const double rmsR = std::sqrt(full.eR);
   const double sum = rmsL + rmsR;
   const double balance = sum > kEps ? 2.0 * std::min(rmsL, rmsR) / sum : 1.0;
+  const double pan = sum > kEps ? std::clamp((rmsL - rmsR) / sum, -1.0, 1.0) : 0.0;
   const float centerConfidence =
       static_cast<float>(std::clamp((fullCorr - 0.35) / 0.65, 0.0, 1.0) * balance);
   const bool blockNearlyMono = fullCorr > 0.9995 && balance > 0.995;
@@ -379,54 +403,45 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float ratio = fast / (slow + 1.0e-5f);
     const float onset =
         std::clamp((ratio - params_.directThreshold) / 2.2f, 0.0f, 1.0f);
-    // v0.8 rear source has two layers:
+    // v0.9: strictly linear rear audio path.
     //
-    //   A) UNIQUE BED — shared same-polarity L/R content is removed, leaving only what differs
-    //      between the channels. This is the quiet continuous widening contribution.
-    //
-    //   B) DIFFUSE SPREAD — balanced stereo side information gets a controlled +/- contribution
-    //      as the diffuse detector opens. Weighting it by packet L/R balance prevents a hard-panned
-    //      direct instrument from being mirrored into the opposite surround.
-    //
-    // Raw L/R is still never copied directly into SL/SR.
-    const float shared = SharedSamePolarity(l, r);
-    float uniqueL = l - shared;
-    float uniqueR = r - shared;
-    const float side = 0.5f * (l - r);
-
+    // The side signal is exactly zero for true mono/center, so there is no need for nonlinear
+    // sample-wise "shared content" subtraction. Two different all-pass networks then turn that
+    // side information into a less-coherent SL/SR field without changing its magnitude spectrum.
+    float side = 0.5f * (l - r);
     if (blockNearlyMono)
-    {
-      uniqueL = 0.0f;
-      uniqueR = 0.0f;
-    }
+      side = 0.0f;
+
+    float decorL = side;
+    float decorR = -side;
+    for (auto& ap : rearDecorL_) decorL = ap.Process(decorL);
+    for (auto& ap : rearDecorR_) decorR = ap.Process(decorR);
 
     const float open = static_cast<float>(diffuseOpen);
-    const float packetBalance = static_cast<float>(balance);
 
-    // Unlike v0.7, the base bed stays meaningfully audible even when the diffuse detector is only
-    // partly open. Front Lock acts on this direct residual so centered/widened vocal body stays
-    // forward. The diffuse spread bypasses Front Lock because decorrelated tails are exactly what
-    // we want to retain.
-    const float baseWidth =
-        params_.widthFloor * (0.40f + 0.60f * open);
-    const float uniqueBedL = uniqueL * baseWidth * frontLockGain;
-    const float uniqueBedR = uniqueR * baseWidth * frontLockGain;
+    // Quiet continuous width bed. Front Lock only changes gain; it never changes waveform shape.
+    const float bedGain =
+        params_.widthFloor * (0.55f + 0.45f * open) * frontLockGain;
 
-    // surroundAmount_ already contains the diffuse-open law. Multiplying by 'open' again here
-    // was effectively a second gate and made ordinary stereo mixes nearly silent in the rears.
+    // Diffuse material gets a stronger layer. We retain most of this when a coherent center exists,
+    // because reverb/room tails around a lead vocal are desirable even while the lead stays front.
+    const float diffuseLockGain = static_cast<float>(
+        1.0 - 0.30 * static_cast<double>(params_.frontLock) * frontLockConfidence);
     const float spreadGain =
-        0.75f * surroundAmount_ * packetBalance;
-    const float spreadL = side * spreadGain;
-    const float spreadR = -side * spreadGain;
+        0.75f * surroundAmount_ * diffuseLockGain;
+
+    // Preserve left/right recording asymmetry using packet-level energy, not sample chopping.
+    const float leftBias = static_cast<float>(0.72 + 0.28 * pan);
+    const float rightBias = static_cast<float>(0.72 - 0.28 * pan);
 
     // Direct-event protection ducks attacks but cannot collapse the rear bed.
     const float effectiveReject = 0.45f * params_.directReject;
     const float softenedDirectGain = 1.0f - effectiveReject * onset;
 
     float rearL = rearLpL_.Process(
-        rearHpL_.Process((uniqueBedL + spreadL) * softenedDirectGain));
+        rearHpL_.Process(decorL * (bedGain + spreadGain) * leftBias * softenedDirectGain));
     float rearR = rearLpR_.Process(
-        rearHpR_.Process((uniqueBedR + spreadR) * softenedDirectGain));
+        rearHpR_.Process(decorR * (bedGain + spreadGain) * rightBias * softenedDirectGain));
     rearL *= params_.rearLeftTrim;
     rearR *= params_.rearRightTrim;
 
