@@ -70,8 +70,10 @@ static std::string Trim(const std::string& s)
 // Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
 //       layout, auto_threshold_db, auto_hold_ms, tray, stereo_processing,
 //       music_surround_gain, music_width_floor, music_ambience_*, music_diffuse_threshold,
- //       music_spectral_intelligence, music_spatial_bin_threshold, music_front_lock,
- //       music_rear_budget, music_direct_*, music_center_*, music_rear_*, music_distance_*_in.
+ //       music_spectral_intelligence, music_spatial_bin_threshold, music_per_bin_routing,
+ //       music_spectral_*_ms, music_dimension, music_center_width, music_steering_*,
+ //       music_front_lock_*, music_front_lock, music_rear_budget, music_direct_*,
+ //       music_center_*, music_rear_*, music_distance_*_in.
 static void LoadConfigFile(const std::string& path, Config& c)
 {
   std::ifstream f(path);
@@ -109,6 +111,19 @@ static void LoadConfigFile(const std::string& path, Config& c)
     else if (k == "music_diffuse_threshold") c.musicDiffuseThreshold = std::strtod(v.c_str(), nullptr);
     else if (k == "music_spectral_intelligence") c.musicSpectralIntelligence = std::strtod(v.c_str(), nullptr);
     else if (k == "music_spatial_bin_threshold") c.musicSpatialBinThreshold = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_per_bin_routing") c.musicPerBinRouting = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_spectral_acquire_ms") c.musicSpectralAcquireMs = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_spectral_release_ms") c.musicSpectralReleaseMs = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_dimension") c.musicDimension = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_center_width") c.musicCenterWidth = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_steering_low") c.musicSpectralSteering[0] = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_steering_body") c.musicSpectralSteering[1] = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_steering_presence") c.musicSpectralSteering[2] = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_steering_air") c.musicSpectralSteering[3] = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_front_lock_low") c.musicSpectralFrontLock[0] = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_front_lock_body") c.musicSpectralFrontLock[1] = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_front_lock_presence") c.musicSpectralFrontLock[2] = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_front_lock_air") c.musicSpectralFrontLock[3] = std::strtod(v.c_str(), nullptr);
     else if (k == "music_front_lock") c.musicFrontLock = std::strtod(v.c_str(), nullptr);
     else if (k == "music_rear_budget") c.musicRearBudget = std::strtod(v.c_str(), nullptr);
     else if (k == "music_direct_reject") c.musicDirectReject = std::strtod(v.c_str(), nullptr);
@@ -191,6 +206,16 @@ static void ParseArgs(int argc, char** argv, Config& c)
       c.musicSpectralIntelligence = std::strtod(argv[++i], nullptr);
     else if (a == "--music-spatial-bin-threshold" && i + 1 < argc)
       c.musicSpatialBinThreshold = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-per-bin-routing" && i + 1 < argc)
+      c.musicPerBinRouting = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-spectral-acquire-ms" && i + 1 < argc)
+      c.musicSpectralAcquireMs = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-spectral-release-ms" && i + 1 < argc)
+      c.musicSpectralReleaseMs = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-dimension" && i + 1 < argc)
+      c.musicDimension = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-center-width" && i + 1 < argc)
+      c.musicCenterWidth = std::strtod(argv[++i], nullptr);
     else if (a == "--music-rear-budget" && i + 1 < argc)
       c.musicRearBudget = std::strtod(argv[++i], nullptr);
     else if (a == "--music-direct-reject" && i + 1 < argc)
@@ -230,6 +255,11 @@ static bool ValidateConfig(const Config& cfg)
       cfg.musicDiffuseThreshold < 0.0 || cfg.musicDiffuseThreshold >= 1.0 ||
       cfg.musicSpectralIntelligence < 0.0 || cfg.musicSpectralIntelligence > 1.0 ||
       cfg.musicSpatialBinThreshold < 0.0 || cfg.musicSpatialBinThreshold > 1.0 ||
+      cfg.musicPerBinRouting < 0.0 || cfg.musicPerBinRouting > 1.0 ||
+      cfg.musicSpectralAcquireMs < 5.0 || cfg.musicSpectralAcquireMs > 5000.0 ||
+      cfg.musicSpectralReleaseMs < 10.0 || cfg.musicSpectralReleaseMs > 10000.0 ||
+      cfg.musicDimension < -1.0 || cfg.musicDimension > 1.0 ||
+      cfg.musicCenterWidth < 0.0 || cfg.musicCenterWidth > 1.0 ||
       cfg.musicFrontLock < 0.0 || cfg.musicFrontLock > 1.0 ||
       cfg.musicRearBudget <= 0.0 || cfg.musicRearBudget > 1.0 ||
       cfg.musicDirectReject < 0.0 || cfg.musicDirectReject > 1.0 ||
@@ -248,6 +278,12 @@ static bool ValidateConfig(const Config& cfg)
     std::fprintf(stderr, "invalid OHL Music tuning value\n");
     return false;
   }
+  for (double v : cfg.musicSpectralSteering)
+    if (v < 0.0 || v > 4.0 || !std::isfinite(v))
+      return false;
+  for (double v : cfg.musicSpectralFrontLock)
+    if (v < 0.0 || v > 2.0 || !std::isfinite(v))
+      return false;
   return true;
 }
 
@@ -360,7 +396,8 @@ struct RunningPipeline
   }
 };
 
-static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, std::string& error)
+static std::unique_ptr<RunningPipeline> StartAudioPipeline(
+    const Config& cfg, std::string& error, MusicTelemetry* telemetry)
 {
   error.clear();
 
@@ -416,6 +453,13 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   pp.musicDiffuseThreshold = cfg.musicDiffuseThreshold;
   pp.musicSpectralIntelligence = cfg.musicSpectralIntelligence;
   pp.musicSpatialBinThreshold = cfg.musicSpatialBinThreshold;
+  pp.musicPerBinRouting = cfg.musicPerBinRouting;
+  pp.musicSpectralAcquireMs = cfg.musicSpectralAcquireMs;
+  pp.musicSpectralReleaseMs = cfg.musicSpectralReleaseMs;
+  pp.musicDimension = cfg.musicDimension;
+  pp.musicCenterWidth = cfg.musicCenterWidth;
+  pp.musicSpectralSteering = cfg.musicSpectralSteering;
+  pp.musicSpectralFrontLock = cfg.musicSpectralFrontLock;
   pp.musicFrontLock = cfg.musicFrontLock;
   pp.musicRearBudget = cfg.musicRearBudget;
   pp.musicDirectReject = cfg.musicDirectReject;
@@ -431,6 +475,7 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   pp.musicDistanceInches = {{
       cfg.musicDistanceFlIn, cfg.musicDistanceFrIn, cfg.musicDistanceCIn,
       cfg.musicDistanceLfeIn, cfg.musicDistanceSlIn, cfg.musicDistanceSrIn}};
+  pp.musicTelemetry = telemetry;
 
   std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
   if (pp.autoLayout)
@@ -641,11 +686,12 @@ int main(int argc, char** argv)
   std::atomic<RuntimeAudioMode> current{RuntimeAudioMode::Starting};
   std::atomic_int requestedExitCode{0};
   std::atomic_bool reloadConfig{false};
+  MusicTelemetry musicTelemetry;
   std::string lastError;
   std::mutex errorMutex;
 
   ModeControlServer control;
-  if (!control.Start(&desired, &current, &lastError, &errorMutex, &reloadConfig))
+  if (!control.Start(&desired, &current, &lastError, &errorMutex, &reloadConfig, &musicTelemetry))
   {
     std::fprintf(stderr, "[ModeControl] failed to start control server\n");
     CloseHandle(singleton);
@@ -706,6 +752,7 @@ int main(int argc, char** argv)
         current.store(RuntimeAudioMode::Stopping);
         std::printf("[ModeControl] switching to GUITAR: releasing capture + exclusive S/PDIF\n");
         pipeline.reset();
+        musicTelemetry.Reset();
 
         {
           std::lock_guard<std::mutex> lock(errorMutex);
@@ -725,7 +772,7 @@ int main(int argc, char** argv)
         std::printf("[ModeControl] switching to SURROUND: acquiring VB-CABLE + S/PDIF\n");
 
         std::string err;
-        auto candidate = StartAudioPipeline(cfg, err);
+        auto candidate = StartAudioPipeline(cfg, err, &musicTelemetry);
         if (candidate)
         {
           pipeline = std::move(candidate);
