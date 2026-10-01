@@ -1,5 +1,7 @@
 #include "AnalyzerVisual.h"
 
+#include <gdiplus.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -23,6 +25,30 @@ constexpr COLORREF kPurple = RGB(173, 126, 255);
 constexpr COLORREF kCyan = RGB(83, 215, 220);
 
 constexpr size_t kHistorySamples = 120; // ~4s at 33 ms polling.
+
+struct GdiPlusScope
+{
+  ULONG_PTR token = 0;
+  Gdiplus::GdiplusStartupInput input{};
+
+  GdiPlusScope()
+  {
+    Gdiplus::GdiplusStartup(&token, &input, nullptr);
+  }
+
+  ~GdiPlusScope()
+  {
+    if (token)
+      Gdiplus::GdiplusShutdown(token);
+  }
+};
+
+GdiPlusScope gGdiPlus;
+
+Gdiplus::Color GpColor(COLORREF c, BYTE alpha = 255)
+{
+  return Gdiplus::Color(alpha, GetRValue(c), GetGValue(c), GetBValue(c));
+}
 
 struct AnalyzerState
 {
@@ -142,7 +168,8 @@ void DrawBandBars(HDC dc,
                   const std::array<float, 4>& center,
                   int x,
                   int y,
-                  int w)
+                  int w,
+                  bool showLegend = true)
 {
   static const wchar_t* names[4] = {L"LOW", L"BODY", L"PRES", L"AIR"};
 
@@ -177,9 +204,12 @@ void DrawBandBars(HDC dc,
     if (ctrFill.right > ctrFill.left) FillRound(dc, ctrFill, 5, kPurple);
   }
 
-  RECT legend{x, top + 52, x + w, top + 69};
-  Text(dc, font, kMuted, L"blue = rear ownership     purple = center confidence",
-       legend, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+  if (showLegend)
+  {
+    RECT legend{x, top + 52, x + w, top + 69};
+    Text(dc, font, kMuted, L"blue = rear ownership     purple = center confidence",
+         legend, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+  }
 }
 
 void DrawHistory(HDC dc,
@@ -212,25 +242,30 @@ void DrawHistory(HDC dc,
     if (q.size() < 2)
       return;
 
-    HPEN pen = CreatePen(PS_SOLID, 2, color);
-    HGDIOBJ oldPen = SelectObject(dc, pen);
-
+    std::vector<Gdiplus::PointF> points;
+    points.reserve(q.size());
     for (size_t i = 0; i < q.size(); ++i)
     {
       const double tx = q.size() <= 1
           ? 0.0
           : static_cast<double>(i) / static_cast<double>(q.size() - 1);
-      const int px = graph.left + 2 + static_cast<int>(
-          std::lround(tx * std::max(1, static_cast<int>(graph.right - graph.left - 4))));
-      const int py = graph.bottom - 2 - static_cast<int>(
-          std::lround(Clamp01(q[i]) * std::max(1, static_cast<int>(graph.bottom - graph.top - 4))));
-
-      if (i == 0) MoveToEx(dc, px, py, nullptr);
-      else LineTo(dc, px, py);
+      const float px = static_cast<float>(
+          graph.left + 2 +
+          tx * (std::max)(1, static_cast<int>(graph.right - graph.left - 4)));
+      const float py = static_cast<float>(
+          graph.bottom - 2 -
+          Clamp01(q[i]) * (std::max)(1, static_cast<int>(graph.bottom - graph.top - 4)));
+      points.emplace_back(px, py);
     }
 
-    SelectObject(dc, oldPen);
-    DeleteObject(pen);
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+    Gdiplus::Pen pen(GpColor(color), 1.6f);
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+    pen.SetLineJoin(Gdiplus::LineJoinRound);
+    graphics.DrawLines(&pen, points.data(), static_cast<INT>(points.size()));
   };
 
   drawTrace(s.historyAmbience, kBlue);
@@ -343,11 +378,11 @@ LRESULT CALLBACK AnalyzerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
           Text(mem, font, m.budgetScale < 0.98f ? kAmber : kMuted, budget, br,
                DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
-          DrawBandBars(mem, font, m.ownership, m.bandCenter, 16, 145, clientW - 32);
+          DrawBandBars(mem, font, m.ownership, m.bandCenter, 16, 142, clientW - 32, false);
           DrawHistory(
               mem, font, *s,
-              16, 218, clientW - 32,
-              std::max(62, clientH - 232));
+              16, 216, clientW - 32,
+              (std::max)(68, clientH - 228));
         }
         else
         {
