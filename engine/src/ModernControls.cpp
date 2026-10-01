@@ -32,6 +32,7 @@ struct ButtonState
 {
   bool hover = false;
   bool pressed = false;
+  bool checked = false;
 };
 
 void FillRound(HDC dc, const RECT& r, int radius, COLORREF color)
@@ -247,6 +248,17 @@ LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
   switch (msg)
   {
+    case BM_SETCHECK:
+      if (s)
+      {
+        s->checked = (wp == BST_CHECKED);
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+
+    case BM_GETCHECK:
+      return s && s->checked ? BST_CHECKED : BST_UNCHECKED;
+
     case WM_MOUSEMOVE:
       if (s && !s->hover)
       {
@@ -322,11 +334,15 @@ LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       FillRect(mem, &r, pageBg);
       DeleteObject(pageBg);
 
-      const COLORREF fill = s && s->pressed ? RGB(38, 72, 98) :
-                            s && s->hover ? kCardHot : kCard;
+      const COLORREF fill =
+          s && s->pressed ? RGB(38, 72, 98) :
+          s && s->checked ? RGB(27, 67, 96) :
+          s && s->hover ? kCardHot : kCard;
       FillRound(mem, r, 8, fill);
 
-      HPEN border = CreatePen(PS_SOLID, 1, s && s->hover ? kAccent : kBorder);
+      HPEN border = CreatePen(
+          PS_SOLID, 1,
+          s && (s->hover || s->checked) ? kAccent : kBorder);
       HGDIOBJ oldP = SelectObject(mem, border);
       HGDIOBJ oldB = SelectObject(mem, GetStockObject(NULL_BRUSH));
       RoundRect(mem, r.left, r.top, r.right - 1, r.bottom - 1, 8, 8);
