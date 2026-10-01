@@ -31,6 +31,7 @@ struct StageState
 {
   std::array<float, 5> distances{{33.0f, 30.0f, 33.0f, 27.0f, 33.0f}};
   OhlAnalyzerMetrics metrics{};
+  bool metricsInitialized = false;
   std::array<POINT, 5> speakerPoints{};
   POINT listener{};
   int hoverSpeaker = -1;
@@ -512,6 +513,30 @@ void UpdateOhlStageVisual(HWND hwnd,
     return;
 
   s->distances = distancesInches;
-  s->metrics = metrics;
+
+  if (!s->metricsInitialized)
+  {
+    s->metrics = metrics;
+    s->metricsInitialized = true;
+  }
+  else
+  {
+    const auto smooth = [](float current, float target, float attack, float release) {
+      const float alpha = target > current ? attack : release;
+      return current + alpha * (target - current);
+    };
+
+    s->metrics.online = metrics.online;
+    s->metrics.sequence = metrics.sequence;
+    s->metrics.ambience = smooth(s->metrics.ambience, metrics.ambience, 0.55f, 0.22f);
+    s->metrics.center = smooth(s->metrics.center, metrics.center, 0.55f, 0.22f);
+    s->metrics.spatialBins = smooth(s->metrics.spatialBins, metrics.spatialBins, 0.55f, 0.22f);
+    s->metrics.rearOpen = smooth(s->metrics.rearOpen, metrics.rearOpen, 0.55f, 0.20f);
+
+    for (size_t i = 0; i < s->metrics.speakerRms.size(); ++i)
+      s->metrics.speakerRms[i] =
+          smooth(s->metrics.speakerRms[i], metrics.speakerRms[i], 0.65f, 0.20f);
+  }
+
   InvalidateRect(hwnd, nullptr, FALSE);
 }
