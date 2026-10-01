@@ -541,6 +541,14 @@ bool WasapiPassthrough::RenderSurroundTest(float* out51)
         frame[0] += v;
         frame[3] += v;
         break;
+      case SurroundTestRoute::FL_LFE_M10:
+        frame[0] += v;
+        frame[3] += v * 0.316227766f; // -10 dB digital LFE send
+        break;
+      case SurroundTestRoute::FL_LFE_INV:
+        frame[0] += v;
+        frame[3] -= v; // 180-degree LFE polarity inversion
+        break;
       case SurroundTestRoute::Off:
         break;
     }
