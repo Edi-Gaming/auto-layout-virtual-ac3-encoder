@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "OhlSpatialAnalyzer.h"
+#include "OhlSpectralRouter.h"
 
 class OhlMusicUpmixer
 {
@@ -36,6 +37,16 @@ public:
     // v0.10 spectral intelligence. 0 = legacy broad-band v0.9 recognition, 1 = STFT classifier.
     float spectralIntelligence = 0.90f;
     float spatialBinThreshold = 0.30f;
+
+    // v0.11 renderer controls.
+    float perBinRouting = 0.55f;
+    float spectralAcquireMs = 65.0f;
+    float spectralReleaseMs = 520.0f;
+    float dimension = 0.0f;     // -1 front, +1 rear
+    float centerWidth = 1.0f;   // 1 = phantom center untouched, 0 = strongest physical-center focus
+
+    std::array<float, 4> spectralSteering{{0.18f, 0.55f, 0.90f, 1.10f}};
+    std::array<float, 4> spectralFrontLock{{0.30f, 1.00f, 0.82f, 0.25f}};
 
     // 0..1 attenuation strength applied to the rear side field when a coherent front center
     // dominates. This is a gain control only; it never modifies waveform shape sample-by-sample.
@@ -73,7 +84,10 @@ public:
   float LastSpatialBinFraction() const { return lastSpatialBinFraction_; }
   float LastSpectralCenter() const { return lastSpectralCenter_; }
   float LastSpectralTransient() const { return lastSpectralTransient_; }
-  int ProcessingLatencySamples() const { return 0; }
+  const std::array<float, 4>& LastBandOwnership() const { return lastBandOwnership_; }
+  const std::array<float, 4>& LastBandCenter() const { return lastBandCenter_; }
+  float LastRearBudgetScale() const { return lastRearBudgetScale_; }
+  int ProcessingLatencySamples() const { return processingLatencySamples_; }
   const std::array<int, kChannels>& DelaySamples() const { return delaySamples_; }
 
 private:
@@ -132,8 +146,12 @@ private:
 
   Params params_{};
   OhlSpatialAnalyzer spatialAnalyzer_;
+  OhlSpectralRouter spectralRouter_;
+  int processingLatencySamples_ = 0;
   std::array<int, kChannels> delaySamples_{{0, 0, 0, 0, 0, 0}};
   std::array<DelayLine, kChannels> delays_;
+  DelayLine broadRearDelayL_;
+  DelayLine broadRearDelayR_;
 
   OnePoleLowpass analysisLowL_;
   OnePoleLowpass analysisLowR_;
@@ -162,4 +180,7 @@ private:
   float lastSpatialBinFraction_ = 0.0f;
   float lastSpectralCenter_ = 0.0f;
   float lastSpectralTransient_ = 0.0f;
+  std::array<float, 4> lastBandOwnership_{{0, 0, 0, 0}};
+  std::array<float, 4> lastBandCenter_{{0, 0, 0, 0}};
+  float lastRearBudgetScale_ = 1.0f;
 };
