@@ -9,6 +9,17 @@
 
 #include "AnalyzerVisual.h"
 
+enum class OhlStageSpeaker : int
+{
+  FL = 0,
+  C = 1,
+  FR = 2,
+  SL = 3,
+  SR = 4,
+};
+
+constexpr UINT OHL_STAGE_DISTANCE_CHANGED = WM_APP + 122;
+
 bool RegisterOhlStageVisual(HINSTANCE instance);
 HWND CreateOhlStageVisual(HWND parent, int id, int x, int y, int w, int h);
 
