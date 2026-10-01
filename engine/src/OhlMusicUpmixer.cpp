@@ -207,6 +207,10 @@ bool OhlMusicUpmixer::Init(const Params& params)
       !std::isfinite(params.ambienceReleaseMs) || params.ambienceReleaseMs <= 0.0f ||
       !std::isfinite(params.diffuseThreshold) || params.diffuseThreshold < 0.0f ||
       params.diffuseThreshold >= 1.0f ||
+      !std::isfinite(params.spectralIntelligence) || params.spectralIntelligence < 0.0f ||
+      params.spectralIntelligence > 1.0f ||
+      !std::isfinite(params.spatialBinThreshold) || params.spatialBinThreshold < 0.0f ||
+      params.spatialBinThreshold > 1.0f ||
       !std::isfinite(params.frontLock) || params.frontLock < 0.0f || params.frontLock > 1.0f ||
       !std::isfinite(params.rearBudget) || params.rearBudget <= 0.0f ||
       params.rearBudget > 1.0f ||
@@ -224,6 +228,14 @@ bool OhlMusicUpmixer::Init(const Params& params)
     return false;
 
   params_ = params;
+
+  OhlSpatialAnalyzer::Params analyzerParams;
+  analyzerParams.sampleRate = params_.sampleRate;
+  analyzerParams.fftSize = 512;
+  analyzerParams.hopSize = 256;
+  analyzerParams.spatialBinThreshold = params_.spatialBinThreshold;
+  if (!spatialAnalyzer_.Init(analyzerParams))
+    return false;
 
   float farthest = 0.0f;
   for (float d : params_.distanceInches)
@@ -293,11 +305,16 @@ void OhlMusicUpmixer::Reset()
   centerLp_.Reset();
   eventFast_.Reset();
   eventSlow_.Reset();
+  spatialAnalyzer_.Reset();
 
   gainInitialized_ = false;
   surroundAmount_ = 0.0f;
   lastCorrelation_ = 1.0f;
   lastFrontLockConfidence_ = 0.0f;
+  lastSpectralAmbience_ = 0.0f;
+  lastSpatialBinFraction_ = 0.0f;
+  lastSpectralCenter_ = 0.0f;
+  lastSpectralTransient_ = 0.0f;
 }
 
 void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* out51)
@@ -333,12 +350,30 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const double fullCorr = BandCorrelation(full);
   lastCorrelation_ = static_cast<float>(fullCorr);
 
-  // Bass contributes little to rear steering. Mid/high diffuseness dominates because that is
-  // where room tone, doubled parts, stereo effects and reverberant tails usually live.
-  const double ambience = std::clamp(
+  // Legacy broad-band estimate remains as a stable fallback, but v0.10's primary recognizer is
+  // an overlapping 512-point STFT classifier. The spectral path can notice a relatively small
+  // set of spatial/reverberant bins even when a loud centered vocal or instrument dominates the
+  // same broad frequency region.
+  const double broadAmbience = std::clamp(
       static_cast<double>(params_.ambienceLowWeight) * AmbienceScore(low) +
       static_cast<double>(params_.ambienceMidWeight) * AmbienceScore(mid) +
       static_cast<double>(params_.ambienceHighWeight) * AmbienceScore(high),
+      0.0, 1.0);
+
+  const auto spectral = spatialAnalyzer_.Analyze(stereo, frames);
+  lastSpectralAmbience_ = spectral.ambience;
+  lastSpatialBinFraction_ = spectral.spatialBinFraction;
+  lastSpectralCenter_ = spectral.center;
+  lastSpectralTransient_ = spectral.transient;
+
+  const double intelligence =
+      std::clamp(static_cast<double>(params_.spectralIntelligence), 0.0, 1.0);
+  const double spectralAmbience = std::clamp(
+      static_cast<double>(spectral.ambience) *
+          (1.0 - 0.18 * static_cast<double>(spectral.transient)),
+      0.0, 1.0);
+  const double ambience = std::clamp(
+      (1.0 - intelligence) * broadAmbience + intelligence * spectralAmbience,
       0.0, 1.0);
 
   const double gateNorm = std::clamp(
@@ -378,11 +413,15 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
       static_cast<float>(std::clamp((fullCorr - 0.35) / 0.65, 0.0, 1.0) * balance);
   const bool blockNearlyMono = fullCorr > 0.9995 && balance > 0.995;
 
-  // Front Lock is now secondary protection. Shared content is removed structurally below;
-  // this confidence only suppresses the leftover widened/doubled residual while a coherent
-  // center dominates the programme.
-  const double frontLockConfidence = std::clamp(
+  // v0.10 front-lock confidence blends the old broad classifier with the spectral estimate.
+  // The spectral term is dominant so a coherent vocal can remain front-anchored even while other
+  // frequency bins in the same packet are allowed to drive surround ambience.
+  const double broadFrontLock = std::clamp(
       0.15 * CenterConfidence(full) + 0.85 * CenterConfidence(mid), 0.0, 1.0);
+  const double frontLockConfidence = std::clamp(
+      (1.0 - intelligence) * broadFrontLock +
+          intelligence * static_cast<double>(spectral.center),
+      0.0, 1.0);
   lastFrontLockConfidence_ = static_cast<float>(frontLockConfidence);
   const float frontLockGain = static_cast<float>(
       1.0 - static_cast<double>(params_.frontLock) * frontLockConfidence);
@@ -420,9 +459,16 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
 
     const float open = static_cast<float>(diffuseOpen);
 
-    // Quiet continuous width bed. Front Lock only changes gain; it never changes waveform shape.
+    // The always-on bed is no longer truly "always on". Spectral occupancy decides whether the
+    // recording has enough spatially interesting bins to deserve a PLII-like width bed. A dry,
+    // front-heavy mix therefore stays more front-biased, while a mix with only a handful of
+    // meaningful ambience bins still gets room because occupancy uses sqrt weighting.
+    const float occupancy = std::sqrt(std::clamp(spectral.spatialBinFraction, 0.0f, 1.0f));
+    const float bedPresence =
+        static_cast<float>((1.0 - intelligence) +
+                           intelligence * (0.28 + 0.72 * occupancy));
     const float bedGain =
-        params_.widthFloor * (0.55f + 0.45f * open) * frontLockGain;
+        params_.widthFloor * (0.55f + 0.45f * open) * bedPresence * frontLockGain;
 
     // Diffuse material gets a stronger layer. We retain most of this when a coherent center exists,
     // because reverb/room tails around a lead vocal are desirable even while the lead stays front.
@@ -431,11 +477,18 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float spreadGain =
         0.75f * surroundAmount_ * diffuseLockGain;
 
-    // Preserve left/right recording asymmetry using packet-level energy, not sample chopping.
+    // Spatially active FFT bins get first say in rear directionality. Fall back toward the
+    // broad packet energy shares as intelligence is reduced.
+    const double smartLeftShare =
+        (1.0 - intelligence) * leftShare +
+        intelligence * static_cast<double>(spectral.spatialLeftShare);
+    const double smartRightShare =
+        (1.0 - intelligence) * rightShare +
+        intelligence * static_cast<double>(spectral.spatialRightShare);
     const float leftBias = static_cast<float>(
-        0.10 + 0.90 * std::clamp(2.0 * leftShare, 0.0, 1.0));
+        0.10 + 0.90 * std::clamp(2.0 * smartLeftShare, 0.0, 1.0));
     const float rightBias = static_cast<float>(
-        0.10 + 0.90 * std::clamp(2.0 * rightShare, 0.0, 1.0));
+        0.10 + 0.90 * std::clamp(2.0 * smartRightShare, 0.0, 1.0));
 
     // Direct-event protection ducks attacks but cannot collapse the rear bed.
     const float effectiveReject = 0.45f * params_.directReject;
