@@ -506,7 +506,8 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(
     const Config& cfg,
     std::string& error,
     MusicTelemetry* telemetry,
-    MusicCaptureLogger* captureLogger)
+    MusicCaptureLogger* captureLogger,
+    SurroundTestState* surroundTestState)
 {
   error.clear();
   if (captureLogger)
@@ -588,6 +589,7 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(
       cfg.musicDistanceLfeIn, cfg.musicDistanceSlIn, cfg.musicDistanceSrIn}};
   pp.musicTelemetry = telemetry;
   pp.musicCaptureLogger = captureLogger;
+  pp.surroundTestState = surroundTestState;
 
   std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
   if (pp.autoLayout)
@@ -818,6 +820,7 @@ int main(int argc, char** argv)
   std::atomic_bool reloadConfig{false};
   MusicTelemetry musicTelemetry;
   MusicCaptureLogger musicCapture;
+  SurroundTestState surroundTest;
   std::string lastError;
   std::mutex errorMutex;
 
@@ -829,7 +832,8 @@ int main(int argc, char** argv)
           &errorMutex,
           &reloadConfig,
           &musicTelemetry,
-          &musicCapture))
+          &musicCapture,
+          &surroundTest))
   {
     std::fprintf(stderr, "[ModeControl] failed to start control server\n");
     CloseHandle(singleton);
@@ -869,6 +873,7 @@ int main(int argc, char** argv)
         if (desired.load() == RuntimeAudioMode::Surround)
         {
           current.store(RuntimeAudioMode::Starting);
+          surroundTest.Stop();
           musicCapture.SetUnavailable();
           pipeline.reset();
           nextRetry = std::chrono::steady_clock::now();
@@ -890,6 +895,7 @@ int main(int argc, char** argv)
       {
         current.store(RuntimeAudioMode::Stopping);
         std::printf("[ModeControl] switching to GUITAR: releasing capture + exclusive S/PDIF\n");
+        surroundTest.Stop();
         musicCapture.SetUnavailable();
         pipeline.reset();
         musicTelemetry.Reset();
@@ -913,7 +919,7 @@ int main(int argc, char** argv)
 
         std::string err;
         auto candidate =
-            StartAudioPipeline(cfg, err, &musicTelemetry, &musicCapture);
+            StartAudioPipeline(cfg, err, &musicTelemetry, &musicCapture, &surroundTest);
         if (candidate)
         {
           pipeline = std::move(candidate);
@@ -949,6 +955,7 @@ int main(int argc, char** argv)
   std::printf("\nStopping...\n");
   current.store(RuntimeAudioMode::Stopping);
   tray.Stop();
+  surroundTest.Stop();
   musicCapture.SetUnavailable();
   pipeline.reset();
   control.Stop();
