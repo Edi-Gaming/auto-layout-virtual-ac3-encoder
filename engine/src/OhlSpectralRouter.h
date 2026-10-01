@@ -44,10 +44,11 @@ public:
   bool Init(const Params& params);
   void Reset();
 
-  // Streaming stereo -> rear pair. Output contains a fixed hopSize-sample latency.
+  // Streaming stereo -> rear pair. A causal 50%-overlap STFT needs one full FFT frame before
+  // the first finalized samples can emerge, so the fixed processing latency is fftSize samples.
   void Process(const float* stereo, size_t frames, float* rearL, float* rearR);
 
-  int LatencySamples() const { return params_.hopSize; }
+  int LatencySamples() const { return params_.fftSize; }
   const Metrics& LastMetrics() const { return metrics_; }
 
 private:
@@ -68,6 +69,7 @@ private:
   std::vector<float> outQueueR_;
   size_t outRead_ = 0;
   int initialSilence_ = 0;
+  bool discardPrerollHop_ = true;
 
   std::vector<double> smoothPL_;
   std::vector<double> smoothPR_;
