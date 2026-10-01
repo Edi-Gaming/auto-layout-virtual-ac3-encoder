@@ -101,7 +101,7 @@ TEST_CASE("Spectral spatial analyzer distinguishes hard pan from balanced diffus
   CHECK(wide.ambience > hard.ambience + 0.20f);
 }
 
-TEST_CASE("Spectral spatial analyzer keeps spatial directionality")
+TEST_CASE("Spectral spatial analyzer keeps directionality for genuinely spatial cues")
 {
   OhlSpatialAnalyzer analyzer;
   OhlSpatialAnalyzer::Params p;
@@ -114,19 +114,28 @@ TEST_CASE("Spectral spatial analyzer keeps spatial directionality")
   std::vector<float> in(4096 * 2, 0.0f);
   for (size_t i = 0; i < 4096; ++i)
   {
-    const double t = static_cast<double>(i) / 48000.0;
+    const double tt = static_cast<double>(i) / 48000.0;
     const float center =
-        0.10f * static_cast<float>(std::sin(2.0 * kPi * 900.0 * t));
+        0.08f * static_cast<float>(std::sin(2.0 * kPi * 900.0 * tt));
     const float leftSpatial =
-        0.18f * static_cast<float>(std::sin(2.0 * kPi * 6300.0 * t + 0.25));
+        static_cast<float>(std::sin(2.0 * kPi * 6300.0 * tt + 0.25));
     const float rightSpatial =
-        0.045f * static_cast<float>(std::sin(2.0 * kPi * 7300.0 * t + 1.1));
-    in[2 * i] = center + leftSpatial;
-    in[2 * i + 1] = center + rightSpatial;
+        static_cast<float>(std::sin(2.0 * kPi * 7600.0 * tt + 1.1));
+
+    // Both cues exist in both channels, so neither is a hard pan. The 6.3 kHz cue is
+    // substantially stronger on L while the smaller 7.6 kHz cue leans R.
+    in[2 * i] =
+        center + 0.18f * leftSpatial - 0.035f * rightSpatial;
+    in[2 * i + 1] =
+        center - 0.085f * leftSpatial + 0.055f * rightSpatial;
   }
 
   const auto m = analyzer.Analyze(in.data(), 4096);
-  MESSAGE("spatial shares L=" << m.spatialLeftShare << " R=" << m.spatialRightShare);
-  CHECK(m.spatialLeftShare > 0.60f);
-  CHECK(m.spatialRightShare < 0.40f);
+  MESSAGE("spatial shares L=" << m.spatialLeftShare << " R=" << m.spatialRightShare
+          << " ambience=" << m.ambience << " bins=" << m.spatialBinFraction);
+
+  CHECK(m.ambience > 0.20f);
+  CHECK(m.spatialBinFraction > 0.10f);
+  CHECK(m.spatialLeftShare > 0.58f);
+  CHECK(m.spatialRightShare < 0.42f);
 }
