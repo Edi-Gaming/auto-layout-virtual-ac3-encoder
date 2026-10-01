@@ -432,6 +432,63 @@ LRESULT CALLBACK GroupProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+LRESULT CALLBACK CardLabelProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+  switch (msg)
+  {
+    case WM_ERASEBKGND:
+      return 1;
+
+    case WM_PAINT:
+    {
+      PAINTSTRUCT ps{};
+      HDC dc = BeginPaint(hwnd, &ps);
+      RECT r{};
+      GetClientRect(hwnd, &r);
+
+      HDC mem = CreateCompatibleDC(dc);
+      HBITMAP bmp = CreateCompatibleBitmap(
+          dc,
+          (std::max)(1, static_cast<int>(r.right)),
+          (std::max)(1, static_cast<int>(r.bottom)));
+      HGDIOBJ oldBmp = SelectObject(mem, bmp);
+
+      HBRUSH bg = CreateSolidBrush(kCard);
+      FillRect(mem, &r, bg);
+      DeleteObject(bg);
+
+      wchar_t text[768] = {};
+      GetWindowTextW(hwnd, text, 768);
+      HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
+      HGDIOBJ oldFont = font ? SelectObject(mem, font) : nullptr;
+
+      SetBkMode(mem, TRANSPARENT);
+      SetTextColor(mem, kText);
+
+      const int height = static_cast<int>(r.bottom - r.top);
+      UINT flags = DT_LEFT | DT_NOPREFIX;
+      if (height <= 26)
+        flags |= DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS;
+      else
+        flags |= DT_TOP | DT_WORDBREAK;
+
+      RECT tr = r;
+      DrawTextW(mem, text, -1, &tr, flags);
+
+      if (oldFont) SelectObject(mem, oldFont);
+
+      BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
+      SelectObject(mem, oldBmp);
+      DeleteObject(bmp);
+      DeleteDC(mem);
+      EndPaint(hwnd, &ps);
+      return 0;
+    }
+  }
+
+  return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 bool RegisterClassSimple(HINSTANCE instance,
                          const wchar_t* name,
                          WNDPROC proc,
@@ -453,5 +510,6 @@ bool RegisterOhlModernControls(HINSTANCE instance)
 {
   return RegisterClassSimple(instance, kOhlSliderClass, SliderProc, LoadCursor(nullptr, IDC_HAND)) &&
          RegisterClassSimple(instance, kOhlButtonClass, ButtonProc, LoadCursor(nullptr, IDC_HAND)) &&
-         RegisterClassSimple(instance, kOhlGroupClass, GroupProc, LoadCursor(nullptr, IDC_ARROW));
+         RegisterClassSimple(instance, kOhlGroupClass, GroupProc, LoadCursor(nullptr, IDC_ARROW)) &&
+         RegisterClassSimple(instance, kOhlCardLabelClass, CardLabelProc, LoadCursor(nullptr, IDC_ARROW));
 }
