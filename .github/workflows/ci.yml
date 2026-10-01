@@ -57,6 +57,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist-test | Out-Null
           Copy-Item engine/build/Release/engine.exe dist-test/
+          Copy-Item engine/build/Release/OHL-Control.exe dist-test/
           Copy-Item engine/build/Release/*.dll dist-test/
           # engine.exe is built /MD. Ship the exact MSVC runtime beside it so the portable/day-to-day
           # build can start even on a machine without a matching VC++ Redistributable installed.
