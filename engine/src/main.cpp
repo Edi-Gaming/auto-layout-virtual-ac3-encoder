@@ -59,6 +59,29 @@ static std::string ExeDir()
   return slash == std::string::npos ? std::string(".") : p.substr(0, slash);
 }
 
+static std::wstring UiLauncherPath()
+{
+  wchar_t buf[MAX_PATH] = {};
+  const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH)
+    return L"OHL-Control.exe";
+
+  std::wstring p(buf, n);
+  const size_t slash = p.find_last_of(L"\\/");
+  if (slash == std::wstring::npos)
+    return L"OHL-Control.exe";
+
+  return p.substr(0, slash + 1) + L"OHL-Control.exe";
+}
+
+static bool LaunchUi(const wchar_t* args)
+{
+  const std::wstring ui = UiLauncherPath();
+  const HINSTANCE rc = ShellExecuteW(
+      nullptr, L"open", ui.c_str(), args, nullptr, SW_SHOWNORMAL);
+  return reinterpret_cast<INT_PTR>(rc) > 32;
+}
+
 static std::string Trim(const std::string& s)
 {
   size_t a = s.find_first_not_of(" \t\r\n");
@@ -527,11 +550,15 @@ static bool HandleControllerCommandLine(int argc, char** argv)
 
     if (a == "--switcher")
     {
+      if (LaunchUi(nullptr))
+        std::exit(0);
       std::exit(RunModeSwitcherGui());
     }
 
     if (a == "--music-settings")
     {
+      if (LaunchUi(L"--music-settings"))
+        std::exit(0);
       std::exit(RunMusicSettingsGui(ExeDir() + "\\virtual-ac3-encoder.conf"));
     }
 
@@ -676,7 +703,11 @@ int main(int argc, char** argv)
     // Friendly installed behavior: double-clicking engine.exe while the hidden daemon is
     // already alive opens the native mode switcher instead of flashing an error console.
     if (argc == 1)
+    {
+      if (LaunchUi(nullptr))
+        return 0;
       return RunModeSwitcherGui();
+    }
 
     std::fprintf(stderr, "another virtual-ac3-encoder engine is already running\n");
     return 4;
