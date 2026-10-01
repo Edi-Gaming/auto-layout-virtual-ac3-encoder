@@ -431,8 +431,8 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
         0.75f * surroundAmount_ * diffuseLockGain;
 
     // Preserve left/right recording asymmetry using packet-level energy, not sample chopping.
-    const float leftBias = static_cast<float>(0.72 + 0.28 * pan);
-    const float rightBias = static_cast<float>(0.72 - 0.28 * pan);
+    const float leftBias = static_cast<float>(0.55 + 0.45 * pan);
+    const float rightBias = static_cast<float>(0.55 - 0.45 * pan);
 
     // Direct-event protection ducks attacks but cannot collapse the rear bed.
     const float effectiveReject = 0.45f * params_.directReject;
