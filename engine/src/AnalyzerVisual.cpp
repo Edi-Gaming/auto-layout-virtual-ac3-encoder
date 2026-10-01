@@ -198,9 +198,9 @@ void DrawHistory(HDC dc,
           ? 0.0
           : static_cast<double>(i) / static_cast<double>(q.size() - 1);
       const int px = graph.left + 2 + static_cast<int>(
-          std::lround(tx * std::max(1, graph.right - graph.left - 4)));
+          std::lround(tx * std::max(1, static_cast<int>(graph.right - graph.left - 4))));
       const int py = graph.bottom - 2 - static_cast<int>(
-          std::lround(Clamp01(q[i]) * std::max(1, graph.bottom - graph.top - 4)));
+          std::lround(Clamp01(q[i]) * std::max(1, static_cast<int>(graph.bottom - graph.top - 4))));
 
       if (i == 0) MoveToEx(dc, px, py, nullptr);
       else LineTo(dc, px, py);
@@ -243,7 +243,7 @@ LRESULT CALLBACK AnalyzerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       GetClientRect(hwnd, &r);
 
       HDC mem = CreateCompatibleDC(dc);
-      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, r.right), std::max(1, r.bottom));
+      HBITMAP bmp = CreateCompatibleBitmap(dc, std::max(1, static_cast<int>(r.right)), std::max(1, static_cast<int>(r.bottom)));
       HGDIOBJ oldBmp = SelectObject(mem, bmp);
 
       FillRectColor(mem, r, kBg);
@@ -299,7 +299,7 @@ LRESULT CALLBACK AnalyzerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
              DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
         DrawBandBars(mem, font, m.ownership, m.bandCenter, 16, 198, meterW);
-        DrawHistory(mem, font, *s, 16, 282, meterW, std::max(70, r.bottom - 296));
+        DrawHistory(mem, font, *s, 16, 282, meterW, std::max(70, static_cast<int>(r.bottom) - 296));
       }
 
       BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
