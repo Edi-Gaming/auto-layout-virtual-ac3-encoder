@@ -5,11 +5,13 @@
 #endif
 
 #include <array>
+#include <cstdint>
 #include <windows.h>
 
 struct OhlAnalyzerMetrics
 {
   bool online = false;
+  uint64_t sequence = 0;
 
   float ambience = 0.0f;
   float center = 0.0f;
@@ -19,6 +21,8 @@ struct OhlAnalyzerMetrics
   float frontLock = 0.0f;
   float budgetScale = 1.0f;
 
+  // AC3 order: FL, FR, C, LFE, SL, SR.
+  std::array<float, 6> speakerRms{{0, 0, 0, 0, 0, 0}};
   std::array<float, 4> ownership{{0, 0, 0, 0}};
   std::array<float, 4> bandCenter{{0, 0, 0, 0}};
 };
