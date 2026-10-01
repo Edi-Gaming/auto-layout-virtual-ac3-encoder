@@ -1,6 +1,7 @@
 #include "ModernControls.h"
 
 #include <commctrl.h>
+#include <windowsx.h>
 
 #include <algorithm>
 #include <cmath>
