@@ -549,6 +549,31 @@ HWND Slider(HWND parent, int id, int x, int y, int w, int maxValue, int pos)
   return c;
 }
 
+HWND Knob(HWND parent,
+          int id,
+          const wchar_t* caption,
+          int x,
+          int y,
+          int w,
+          int h,
+          int maxValue,
+          int pos,
+          COLORREF accent)
+{
+  HWND c = CreateWindowW(
+      kOhlMacroKnobClass,
+      caption,
+      WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+      x, y, w, h, parent,
+      reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+      nullptr, nullptr);
+  SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+  SendMessageW(c, TBM_SETRANGE, TRUE, MAKELPARAM(0, maxValue));
+  SendMessageW(c, TBM_SETPOS, TRUE, pos);
+  SendMessageW(c, OHL_KNOB_SET_ACCENT, 0, static_cast<LPARAM>(accent));
+  return c;
+}
+
 HWND ValueLabel(HWND parent, int id, int x, int y, int w = 62)
 {
   HWND c = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_RIGHT,
@@ -565,6 +590,30 @@ HWND Button(HWND parent, int id, const wchar_t* text, int x, int y, int w, int h
                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
   return c;
+}
+
+void ShowControls(const std::vector<HWND>& controls, bool show)
+{
+  for (HWND control : controls)
+    if (control)
+      ShowWindow(control, show ? SW_SHOW : SW_HIDE);
+}
+
+void SetUiPage(HWND hwnd, bool mix)
+{
+  gMixPage = mix;
+  ShowControls(gMixControls, mix);
+  ShowControls(gLabControls, !mix);
+
+  SendDlgItemMessageW(hwnd, kViewMix, BM_SETCHECK, mix ? BST_CHECKED : BST_UNCHECKED, 0);
+  SendDlgItemMessageW(hwnd, kViewLab, BM_SETCHECK, mix ? BST_UNCHECKED : BST_CHECKED, 0);
+
+  SetDlgItemTextW(
+      hwnd,
+      kStatus,
+      mix ? L"MIX view — tune by ear; LAB holds the engineering controls."
+          : L"LAB view — advanced detector, matrix, voicing and geometry tuning.");
+  InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 void SetDoubleEdit(HWND hwnd, int id, double value, int precision = 1)
@@ -586,15 +635,12 @@ int PercentToSlider(double x) { return static_cast<int>(std::lround(x * 100.0));
 
 void UpdateSliderLabels(HWND hwnd)
 {
-  const auto pct = [&](int slider, int label) {
-    const int v = static_cast<int>(SendDlgItemMessageW(hwnd, slider, TBM_GETPOS, 0, 0));
-    const std::wstring s = std::to_wstring(v) + L"%";
-    SetDlgItemTextW(hwnd, label, s.c_str());
-  };
-  pct(kAmbience, kAmbienceValue);
-  pct(kWidth, kWidthValue);
-  pct(kSpectralIntelligence, kSpectralIntelligenceValue);
-  pct(kFrontLock, kFrontLockValue);
+  for (int id : {kAmbience, kWidth, kSpectralIntelligence, kFrontLock})
+  {
+    HWND control = GetDlgItem(hwnd, id);
+    if (control)
+      InvalidateRect(control, nullptr, FALSE);
+  }
 }
 
 std::array<float, 5> StageDistances(const SettingsState& s)
