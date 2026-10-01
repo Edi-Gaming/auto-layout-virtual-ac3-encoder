@@ -417,7 +417,7 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
       std::clamp(static_cast<double>(params_.spectralIntelligence), 0.0, 1.0);
   const double spectralAmbience = std::clamp(
       static_cast<double>(spectral.ambience) *
-          (1.0 - 0.18 * static_cast<double>(spectral.transient)),
+          (1.0 - 0.08 * static_cast<double>(spectral.transient)),
       0.0, 1.0);
   const double ambience = std::clamp(
       (1.0 - intelligence) * broadAmbience + intelligence * spectralAmbience,
@@ -568,10 +568,13 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float effectiveReject = 0.45f * params_.directReject;
     const float softenedDirectGain = 1.0f - effectiveReject * onset;
 
+    // Preserve the quiet width bed through attacks. Only the adaptive diffuse layer is
+    // transient-ducked; otherwise fast hats repeatedly modulate the entire rear field and sound
+    // chopped even when the programme clearly contains useful spatial information.
     const float broadL =
-        decorL * (bedGain + spreadGain) * leftBias * softenedDirectGain * broadbandDimension;
+        decorL * (bedGain + spreadGain * softenedDirectGain) * leftBias * broadbandDimension;
     const float broadR =
-        decorR * (bedGain + spreadGain) * rightBias * softenedDirectGain * broadbandDimension;
+        decorR * (bedGain + spreadGain * softenedDirectGain) * rightBias * broadbandDimension;
 
     // Spectral WOLA has a fixed hop-size latency. Delay the known-good broadband renderer by the
     // same amount before blending so changing Per-bin Routing cannot smear timing or image depth.
