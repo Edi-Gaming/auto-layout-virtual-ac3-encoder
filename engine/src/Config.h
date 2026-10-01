@@ -55,6 +55,8 @@ struct Config
   double musicAmbienceAttackMs = 100.0;
   double musicAmbienceReleaseMs = 520.0;
   double musicDiffuseThreshold = 0.10;
+  double musicSpectralIntelligence = 0.90;
+  double musicSpatialBinThreshold = 0.30;
 
   double musicFrontLock = 0.88;
   double musicRearBudget = 0.22;
