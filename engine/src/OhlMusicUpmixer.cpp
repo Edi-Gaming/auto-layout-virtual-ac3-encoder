@@ -467,6 +467,17 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const float frontLockGain = static_cast<float>(
       1.0 - static_cast<double>(params_.frontLock) * frontLockConfidence);
 
+  std::vector<float> spectralRearL(frames, 0.0f);
+  std::vector<float> spectralRearR(frames, 0.0f);
+  spectralRouter_.Process(stereo, frames, spectralRearL.data(), spectralRearR.data());
+  const auto& routed = spectralRouter_.LastMetrics();
+  lastBandOwnership_ = routed.ownership;
+  lastBandCenter_ = routed.center;
+
+  const float perBinBlend = std::clamp(params_.perBinRouting, 0.0f, 1.0f);
+  const float broadbandDimension =
+      static_cast<float>(std::pow(2.0, 0.85 * static_cast<double>(params_.dimension)));
+
   rearScratchL_.assign(frames, 0.0f);
   rearScratchR_.assign(frames, 0.0f);
   double rearEnergy = 0.0;
@@ -538,10 +549,23 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float effectiveReject = 0.45f * params_.directReject;
     const float softenedDirectGain = 1.0f - effectiveReject * onset;
 
-    float rearL = rearLpL_.Process(
-        rearHpL_.Process(decorL * (bedGain + spreadGain) * leftBias * softenedDirectGain));
-    float rearR = rearLpR_.Process(
-        rearHpR_.Process(decorR * (bedGain + spreadGain) * rightBias * softenedDirectGain));
+    const float broadL =
+        decorL * (bedGain + spreadGain) * leftBias * softenedDirectGain * broadbandDimension;
+    const float broadR =
+        decorR * (bedGain + spreadGain) * rightBias * softenedDirectGain * broadbandDimension;
+
+    // Spectral WOLA has a fixed hop-size latency. Delay the known-good broadband renderer by the
+    // same amount before blending so changing Per-bin Routing cannot smear timing or image depth.
+    const float alignedBroadL = broadRearDelayL_.Process(broadL);
+    const float alignedBroadR = broadRearDelayR_.Process(broadR);
+
+    const float mixedL =
+        (1.0f - perBinBlend) * alignedBroadL + perBinBlend * spectralRearL[i];
+    const float mixedR =
+        (1.0f - perBinBlend) * alignedBroadR + perBinBlend * spectralRearR[i];
+
+    float rearL = rearLpL_.Process(rearHpL_.Process(mixedL));
+    float rearR = rearLpR_.Process(rearHpR_.Process(mixedR));
     rearL *= params_.rearLeftTrim;
     rearR *= params_.rearRightTrim;
 
@@ -563,6 +587,7 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const double allowed = static_cast<double>(params_.rearBudget) * frontRms;
     budgetScale = static_cast<float>(std::min(1.0, allowed / rearRms));
   }
+  lastRearBudgetScale_ = budgetScale;
 
   for (size_t i = 0; i < frames; ++i)
   {
@@ -571,15 +596,25 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
     const float midSample = 0.5f * (l + r);
 
     const float centerBand = centerLp_.Process(centerHp_.Process(midSample));
-    const float center =
+    const float sparkle =
         params_.centerTrebleGain * centerConfidence * centerBand;
+
+    // Center Width is intentionally conservative. At 1.0 the proven v0.10 front stage is
+    // untouched. Moving toward 0 transfers a controlled amount of coherent center information
+    // from FL/FR into the physical center rather than merely adding another center copy.
+    const float centerFocus = static_cast<float>(
+        0.45 * (1.0 - static_cast<double>(params_.centerWidth)) *
+        static_cast<double>(centerConfidence)) * midSample;
+    const float frontL = l - centerFocus;
+    const float frontR = r - centerFocus;
+    const float center = sparkle + 1.41421356f * centerFocus;
 
     const float rearL = rearScratchL_[i] * budgetScale;
     const float rearR = rearScratchR_[i] * budgetScale;
 
     const float raw[kChannels] = {
-        l,
-        r,
+        frontL,
+        frontR,
         center,
         0.0f,
         std::clamp(rearL, -1.0f, 1.0f),
