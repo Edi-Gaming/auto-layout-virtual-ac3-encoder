@@ -178,7 +178,7 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
 if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
   Add-Content -Path $configDst -Encoding UTF8 -Value @(
     ''
-    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.10'
+    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.11'
     'stereo_processing=receiver'
     'music_surround_gain=0.70'
     'music_width_floor=0.16'
@@ -190,6 +190,19 @@ if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
     'music_diffuse_threshold=0.10'
     'music_spectral_intelligence=0.90'
     'music_spatial_bin_threshold=0.30'
+    'music_per_bin_routing=0.55'
+    'music_spectral_acquire_ms=65'
+    'music_spectral_release_ms=520'
+    'music_dimension=0.00'
+    'music_center_width=1.00'
+    'music_steering_low=0.18'
+    'music_steering_body=0.55'
+    'music_steering_presence=0.90'
+    'music_steering_air=1.10'
+    'music_front_lock_low=0.30'
+    'music_front_lock_body=1.00'
+    'music_front_lock_presence=0.82'
+    'music_front_lock_air=0.25'
     'music_front_lock=0.88'
     'music_rear_budget=0.22'
     'music_direct_reject=0.78'
@@ -225,6 +238,19 @@ $musicUpgradeDefaults = @(
   @('music_diffuse_threshold', '0.10'),
   @('music_spectral_intelligence', '0.90'),
   @('music_spatial_bin_threshold', '0.30'),
+  @('music_per_bin_routing', '0.55'),
+  @('music_spectral_acquire_ms', '65'),
+  @('music_spectral_release_ms', '520'),
+  @('music_dimension', '0.00'),
+  @('music_center_width', '1.00'),
+  @('music_steering_low', '0.18'),
+  @('music_steering_body', '0.55'),
+  @('music_steering_presence', '0.90'),
+  @('music_steering_air', '1.10'),
+  @('music_front_lock_low', '0.30'),
+  @('music_front_lock_body', '1.00'),
+  @('music_front_lock_presence', '0.82'),
+  @('music_front_lock_air', '0.25'),
   @('music_front_lock', '0.88'),
   @('music_rear_budget', '0.22'),
   @('music_direct_reject', '0.78'),
