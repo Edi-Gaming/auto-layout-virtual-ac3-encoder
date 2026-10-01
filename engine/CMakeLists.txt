@@ -85,6 +85,10 @@ add_executable(engine
   src/DeviceEnum.h
   src/ModeControl.cpp
   src/ModeControl.h
+  src/ModernControls.cpp
+  src/ModernControls.h
+  src/AnalyzerVisual.cpp
+  src/AnalyzerVisual.h
   src/MusicSettings.cpp
   src/MusicSettings.h
   src/TrayIcon.cpp
@@ -116,6 +120,10 @@ add_executable(ohl_ui WIN32
   src/BrandIcon.h
   src/ModeControl.cpp
   src/ModeControl.h
+  src/ModernControls.cpp
+  src/ModernControls.h
+  src/AnalyzerVisual.cpp
+  src/AnalyzerVisual.h
   src/MusicSettings.cpp
   src/MusicSettings.h
 )
