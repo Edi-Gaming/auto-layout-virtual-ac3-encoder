@@ -47,6 +47,8 @@ add_library(ac3core STATIC
   src/SpdifEncoder.h
   src/OhlMusicUpmixer.cpp
   src/OhlMusicUpmixer.h
+  src/OhlSpatialAnalyzer.cpp
+  src/OhlSpatialAnalyzer.h
   src/RingBuffer.h
 )
 target_include_directories(ac3core PUBLIC src)
