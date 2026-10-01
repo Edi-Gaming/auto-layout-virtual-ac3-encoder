@@ -26,6 +26,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <shellapi.h>
 #include <cstdlib>
 #include <fstream>
 #include <memory>
