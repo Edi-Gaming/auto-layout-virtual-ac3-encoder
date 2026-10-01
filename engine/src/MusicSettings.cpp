@@ -156,6 +156,9 @@ struct SettingsState
   double sr = 33.0;
 };
 
+SettingsState gSnapshotA;
+SettingsState gSnapshotB;
+
 std::string Trim(const std::string& s)
 {
   const size_t a = s.find_first_not_of(" \t\r\n");
@@ -395,6 +398,14 @@ void UpdateSliderLabels(HWND hwnd)
   pct(kAmbience, kAmbienceValue);
   pct(kWidth, kWidthValue);
   pct(kSpectralIntelligence, kSpectralIntelligenceValue);
+  pct(kPerBinRouting, kPerBinRoutingValue);
+  {
+    const int v = static_cast<int>(SendDlgItemMessageW(hwnd, kDimension, TBM_GETPOS, 0, 0));
+    const int signedValue = v - 100;
+    const std::wstring s = (signedValue > 0 ? L"+" : L"") + std::to_wstring(signedValue) + L"%";
+    SetDlgItemTextW(hwnd, kDimensionValue, s.c_str());
+  }
+  pct(kCenterWidth, kCenterWidthValue);
   pct(kFrontLock, kFrontLockValue);
   pct(kReject, kRejectValue);
   pct(kCenter, kCenterValue);
@@ -411,6 +422,12 @@ void PushStateToControls(HWND hwnd, const SettingsState& s)
   SendDlgItemMessageW(hwnd, kWidth, TBM_SETPOS, TRUE, PercentToSlider(s.width));
   SendDlgItemMessageW(hwnd, kSpectralIntelligence, TBM_SETPOS, TRUE,
                       PercentToSlider(s.spectralIntelligence));
+  SendDlgItemMessageW(hwnd, kPerBinRouting, TBM_SETPOS, TRUE,
+                      PercentToSlider(s.perBinRouting));
+  SendDlgItemMessageW(hwnd, kDimension, TBM_SETPOS, TRUE,
+                      static_cast<LPARAM>(std::lround((s.dimension + 1.0) * 100.0)));
+  SendDlgItemMessageW(hwnd, kCenterWidth, TBM_SETPOS, TRUE,
+                      PercentToSlider(s.centerWidth));
   SendDlgItemMessageW(hwnd, kFrontLock, TBM_SETPOS, TRUE, PercentToSlider(s.frontLock));
   SendDlgItemMessageW(hwnd, kReject, TBM_SETPOS, TRUE, PercentToSlider(s.directReject));
   SendDlgItemMessageW(hwnd, kCenter, TBM_SETPOS, TRUE, PercentToSlider(s.center));
@@ -422,6 +439,16 @@ void PushStateToControls(HWND hwnd, const SettingsState& s)
   SetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs, 0);
   SetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs, 0);
   SetDoubleEdit(hwnd, kSpatialBinThreshold, s.spatialBinThreshold, 2);
+  SetDoubleEdit(hwnd, kSpectralAcquire, s.spectralAcquireMs, 0);
+  SetDoubleEdit(hwnd, kSpectralRelease, s.spectralReleaseMs, 0);
+  SetDoubleEdit(hwnd, kSteerLow, s.steerLow, 2);
+  SetDoubleEdit(hwnd, kSteerBody, s.steerBody, 2);
+  SetDoubleEdit(hwnd, kSteerPresence, s.steerPresence, 2);
+  SetDoubleEdit(hwnd, kSteerAir, s.steerAir, 2);
+  SetDoubleEdit(hwnd, kLockLow, s.lockLow, 2);
+  SetDoubleEdit(hwnd, kLockBody, s.lockBody, 2);
+  SetDoubleEdit(hwnd, kLockPresence, s.lockPresence, 2);
+  SetDoubleEdit(hwnd, kLockAir, s.lockAir, 2);
   SetDoubleEdit(hwnd, kDiffuseThreshold, s.diffuseThreshold, 2);
   SetDoubleEdit(hwnd, kRearBudget, s.rearBudget, 2);
   SetDoubleEdit(hwnd, kDirectThreshold, s.directThreshold, 2);
@@ -452,6 +479,12 @@ void PullControlsToState(HWND hwnd, SettingsState& s)
       static_cast<double>(SendDlgItemMessageW(hwnd, kWidth, TBM_GETPOS, 0, 0)) / 100.0;
   s.spectralIntelligence =
       static_cast<double>(SendDlgItemMessageW(hwnd, kSpectralIntelligence, TBM_GETPOS, 0, 0)) / 100.0;
+  s.perBinRouting =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kPerBinRouting, TBM_GETPOS, 0, 0)) / 100.0;
+  s.dimension =
+      (static_cast<double>(SendDlgItemMessageW(hwnd, kDimension, TBM_GETPOS, 0, 0)) - 100.0) / 100.0;
+  s.centerWidth =
+      static_cast<double>(SendDlgItemMessageW(hwnd, kCenterWidth, TBM_GETPOS, 0, 0)) / 100.0;
   s.spatialBinThreshold =
       std::clamp(GetDoubleEdit(hwnd, kSpatialBinThreshold, s.spatialBinThreshold), 0.0, 1.0);
   s.frontLock =
@@ -474,6 +507,16 @@ void PullControlsToState(HWND hwnd, SettingsState& s)
 
   s.ambienceAttackMs = std::clamp(GetDoubleEdit(hwnd, kAmbienceAttack, s.ambienceAttackMs), 5.0, 5000.0);
   s.ambienceReleaseMs = std::clamp(GetDoubleEdit(hwnd, kAmbienceRelease, s.ambienceReleaseMs), 10.0, 10000.0);
+  s.spectralAcquireMs = std::clamp(GetDoubleEdit(hwnd, kSpectralAcquire, s.spectralAcquireMs), 5.0, 5000.0);
+  s.spectralReleaseMs = std::clamp(GetDoubleEdit(hwnd, kSpectralRelease, s.spectralReleaseMs), 10.0, 10000.0);
+  s.steerLow = std::clamp(GetDoubleEdit(hwnd, kSteerLow, s.steerLow), 0.0, 4.0);
+  s.steerBody = std::clamp(GetDoubleEdit(hwnd, kSteerBody, s.steerBody), 0.0, 4.0);
+  s.steerPresence = std::clamp(GetDoubleEdit(hwnd, kSteerPresence, s.steerPresence), 0.0, 4.0);
+  s.steerAir = std::clamp(GetDoubleEdit(hwnd, kSteerAir, s.steerAir), 0.0, 4.0);
+  s.lockLow = std::clamp(GetDoubleEdit(hwnd, kLockLow, s.lockLow), 0.0, 2.0);
+  s.lockBody = std::clamp(GetDoubleEdit(hwnd, kLockBody, s.lockBody), 0.0, 2.0);
+  s.lockPresence = std::clamp(GetDoubleEdit(hwnd, kLockPresence, s.lockPresence), 0.0, 2.0);
+  s.lockAir = std::clamp(GetDoubleEdit(hwnd, kLockAir, s.lockAir), 0.0, 2.0);
   s.directThreshold = std::clamp(GetDoubleEdit(hwnd, kDirectThreshold, s.directThreshold), 1.01, 8.0);
   s.directRecoveryMs = std::clamp(GetDoubleEdit(hwnd, kDirectRecovery, s.directRecoveryMs), 1.0, 500.0);
 
@@ -619,6 +662,19 @@ void Apply(HWND hwnd, SettingsState& state)
   values["music_ambience_release_ms"] = Fmt(state.ambienceReleaseMs, 0);
   values["music_spectral_intelligence"] = Fmt(state.spectralIntelligence);
   values["music_spatial_bin_threshold"] = Fmt(state.spatialBinThreshold);
+  values["music_per_bin_routing"] = Fmt(state.perBinRouting);
+  values["music_spectral_acquire_ms"] = Fmt(state.spectralAcquireMs, 0);
+  values["music_spectral_release_ms"] = Fmt(state.spectralReleaseMs, 0);
+  values["music_dimension"] = Fmt(state.dimension);
+  values["music_center_width"] = Fmt(state.centerWidth);
+  values["music_steering_low"] = Fmt(state.steerLow);
+  values["music_steering_body"] = Fmt(state.steerBody);
+  values["music_steering_presence"] = Fmt(state.steerPresence);
+  values["music_steering_air"] = Fmt(state.steerAir);
+  values["music_front_lock_low"] = Fmt(state.lockLow);
+  values["music_front_lock_body"] = Fmt(state.lockBody);
+  values["music_front_lock_presence"] = Fmt(state.lockPresence);
+  values["music_front_lock_air"] = Fmt(state.lockAir);
   values["music_front_lock"] = Fmt(state.frontLock);
   values["music_diffuse_threshold"] = Fmt(state.diffuseThreshold);
   values["music_rear_budget"] = Fmt(state.rearBudget);
