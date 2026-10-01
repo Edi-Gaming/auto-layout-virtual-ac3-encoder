@@ -244,8 +244,9 @@ void AdvanceSweep(HWND hwnd)
 
 HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool small = false)
 {
+  const bool onCard = x >= 475 && x < 785 && y >= 104 && y < 485;
   HWND c = CreateWindowW(
-      L"STATIC", text, WS_CHILD | WS_VISIBLE,
+      onCard ? kOhlCardLabelClass : L"STATIC", text, WS_CHILD | WS_VISIBLE,
       x, y, w, h, parent, nullptr, nullptr, nullptr);
   SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(small ? gSmall : gUi), TRUE);
   return c;
@@ -422,6 +423,10 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
           CheckRouteButtons(hwnd, gRoute);
           StartRoute(hwnd, gRoute);
         }
+      }
+      else
+      {
+        SetStatus(hwnd, L"ENGINE OFFLINE — start Surround mode first");
       }
 
       return 0;
