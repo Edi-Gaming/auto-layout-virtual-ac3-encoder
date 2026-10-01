@@ -350,7 +350,7 @@ OhlAnalyzerMetrics ParseMetricsResponse(const std::string& response)
     return m;
 
   m.online = true;
-  m.sequence = static_cast<uint64_t>(std::max(0.0, MetricDouble(f, "seq")));
+  m.sequence = static_cast<uint64_t>((std::max)(0.0, MetricDouble(f, "seq")));
   m.ambience = static_cast<float>(MetricDouble(f, "amb"));
   m.center = static_cast<float>(MetricDouble(f, "center"));
   m.spatialBins = static_cast<float>(MetricDouble(f, "bins"));
@@ -393,7 +393,7 @@ void StartMetricsWorker(HWND hwnd)
   {
     auto next = std::chrono::steady_clock::now();
     OhlAnalyzerMetrics lastGood{};
-    uint64_t lastPostedSequence = std::numeric_limits<uint64_t>::max();
+    uint64_t lastPostedSequence = (std::numeric_limits<uint64_t>::max)();
     int consecutiveMisses = 0;
     bool offlinePosted = false;
 
