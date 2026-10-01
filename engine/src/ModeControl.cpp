@@ -9,6 +9,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <string>
+#include <sstream>
 
 namespace {
 
@@ -284,7 +285,8 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
                               std::mutex* errorMutex,
                               std::atomic_bool* reloadConfig,
                               MusicTelemetry* musicTelemetry,
-                              MusicCaptureLogger* musicCaptureLogger)
+                              MusicCaptureLogger* musicCaptureLogger,
+                              SurroundTestState* surroundTestState)
 {
   if (thread_.joinable())
     return true;
@@ -296,6 +298,7 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
   reloadConfig_ = reloadConfig;
   musicTelemetry_ = musicTelemetry;
   musicCaptureLogger_ = musicCaptureLogger;
+  surroundTestState_ = surroundTestState;
   stop_.store(false);
 
   try
@@ -379,6 +382,67 @@ void ModeControlServer::ThreadProc()
       else if (command == "metrics")
       {
         response = musicTelemetry_ ? musicTelemetry_->ToCompactString() : "offline";
+      }
+      else if (command.rfind("test tone ", 0) == 0)
+      {
+        if (!surroundTestState_)
+        {
+          response = "test_state=error;error=test_generator_unavailable";
+        }
+        else if (!current_ || current_->load() != RuntimeAudioMode::Surround)
+        {
+          response = "test_state=error;error=surround_not_active";
+        }
+        else
+        {
+          std::istringstream in(command.substr(std::strlen("test tone ")));
+          std::string routeText;
+          int frequencyHz = 0;
+          double levelDb = 0.0;
+          std::string extra;
+          if (!(in >> routeText >> frequencyHz >> levelDb) || (in >> extra))
+          {
+            response = "test_state=error;error=invalid_syntax";
+          }
+          else
+          {
+            SurroundTestRoute route = SurroundTestRoute::Off;
+            if (!ParseSurroundTestRoute(routeText, route))
+            {
+              response = "test_state=error;error=invalid_route";
+            }
+            else if (!surroundTestState_->Start(route, frequencyHz, levelDb))
+            {
+              response = "test_state=error;error=invalid_test_parameters";
+            }
+            else
+            {
+              // A diagnostic tone replaces the program stream. Do not leave an OHL debug capture
+              // armed waiting for packets that intentionally are not being rendered.
+              if (musicCaptureLogger_)
+                musicCaptureLogger_->Cancel();
+              response = surroundTestState_->ToCompactString();
+            }
+          }
+        }
+      }
+      else if (command == "test stop")
+      {
+        if (surroundTestState_)
+        {
+          surroundTestState_->Stop();
+          response = surroundTestState_->ToCompactString();
+        }
+        else
+        {
+          response = "test_state=error;error=test_generator_unavailable";
+        }
+      }
+      else if (command == "test status")
+      {
+        response = surroundTestState_
+            ? surroundTestState_->ToCompactString()
+            : "test_state=error;error=test_generator_unavailable";
       }
       else if (command.rfind("capture start", 0) == 0)
       {
