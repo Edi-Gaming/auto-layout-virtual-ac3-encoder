@@ -13,6 +13,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Parse PowerShell installer
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/install-day-to-day.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error ($_.Message + ' at ' + $_.Extent.StartLineNumber + ':' + $_.Extent.StartColumnNumber) }
+            throw "PowerShell installer has $($errors.Count) parser error(s)."
+          }
+
       # FFmpeg shared dev libs are not committed; cache them across runs.
       - name: Cache FFmpeg dev libs
         id: ffmpeg-cache
