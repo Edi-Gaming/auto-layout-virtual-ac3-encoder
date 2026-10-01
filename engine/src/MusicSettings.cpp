@@ -255,6 +255,96 @@ std::string Fmt(double x, int precision = 2)
   return o.str();
 }
 
+std::map<std::string, std::string> ParseCompactFields(const std::string& text)
+{
+  std::map<std::string, std::string> out;
+  size_t start = 0;
+  while (start < text.size())
+  {
+    const size_t end = text.find(';', start);
+    const std::string token = text.substr(
+        start, end == std::string::npos ? std::string::npos : end - start);
+    const size_t eq = token.find('=');
+    if (eq != std::string::npos)
+      out[token.substr(0, eq)] = token.substr(eq + 1);
+    if (end == std::string::npos) break;
+    start = end + 1;
+  }
+  return out;
+}
+
+double MetricDouble(const std::map<std::string, std::string>& fields,
+                    const char* key,
+                    double fallback = 0.0)
+{
+  auto it = fields.find(key);
+  if (it == fields.end()) return fallback;
+  char* end = nullptr;
+  const double v = std::strtod(it->second.c_str(), &end);
+  return (end && end != it->second.c_str() && std::isfinite(v)) ? v : fallback;
+}
+
+std::array<double, 4> MetricQuad(const std::map<std::string, std::string>& fields,
+                                 const char* key)
+{
+  std::array<double, 4> out{{0, 0, 0, 0}};
+  auto it = fields.find(key);
+  if (it == fields.end()) return out;
+  std::istringstream in(it->second);
+  std::string item;
+  for (size_t i = 0; i < out.size() && std::getline(in, item, ','); ++i)
+  {
+    char* end = nullptr;
+    const double v = std::strtod(item.c_str(), &end);
+    if (end && end != item.c_str() && std::isfinite(v))
+      out[i] = v;
+  }
+  return out;
+}
+
+void RefreshMetrics(HWND hwnd)
+{
+  std::string response;
+  if (!SendModeCommand("metrics", response, 120))
+  {
+    SetDlgItemTextW(hwnd, kMeterSummary, L"Engine offline / metrics unavailable.");
+    SetDlgItemTextW(hwnd, kMeterBands, L"OWN  --  --  --  --\r\nCTR  --  --  --  --");
+    return;
+  }
+
+  const auto f = ParseCompactFields(response);
+  if (f.empty())
+    return;
+
+  const double amb = MetricDouble(f, "amb");
+  const double ctr = MetricDouble(f, "center");
+  const double bins = MetricDouble(f, "bins");
+  const double trans = MetricDouble(f, "trans");
+  const double rear = MetricDouble(f, "rear");
+  const double lock = MetricDouble(f, "lock");
+  const double budget = MetricDouble(f, "budget", 1.0);
+  const auto own = MetricQuad(f, "own");
+  const auto bandCenter = MetricQuad(f, "bandcenter");
+
+  wchar_t summary[512] = {};
+  swprintf_s(summary, L"Ambience %3.0f%%   Center %3.0f%%\r\n"
+                      L"Spatial bins %3.0f%%   Transient %3.0f%%\r\n"
+                      L"Rear open %3.0f%%   Front lock %3.0f%%\r\n"
+                      L"Budget scale %3.0f%%",
+             100.0 * amb, 100.0 * ctr, 100.0 * bins, 100.0 * trans,
+             100.0 * rear, 100.0 * lock, 100.0 * budget);
+  SetDlgItemTextW(hwnd, kMeterSummary, summary);
+
+  wchar_t bands[512] = {};
+  swprintf_s(bands, L"          LOW   BODY   PRES    AIR\r\n"
+                    L"OWN      %3.0f    %3.0f    %3.0f    %3.0f\r\n"
+                    L"CENTER   %3.0f    %3.0f    %3.0f    %3.0f",
+             100.0 * own[0], 100.0 * own[1], 100.0 * own[2], 100.0 * own[3],
+             100.0 * bandCenter[0], 100.0 * bandCenter[1],
+             100.0 * bandCenter[2], 100.0 * bandCenter[3]);
+  SetDlgItemTextW(hwnd, kMeterBands, bands);
+}
+
 bool WriteValues(const std::string& path, const std::map<std::string, std::string>& values)
 {
   std::vector<std::string> lines;
