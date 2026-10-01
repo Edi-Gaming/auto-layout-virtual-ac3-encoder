@@ -8,6 +8,7 @@
 
 #include <commctrl.h>
 #include <windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <array>
@@ -105,6 +106,7 @@ enum ControlId
   kStageViz,
   kMeterSummary,
   kMeterBands,
+  kSurroundWizard,
   kCapture,
   kCaptureState,
   kReload,
@@ -356,6 +358,29 @@ std::wstring WidenCaptureUtf8(const std::string& text)
   MultiByteToWideChar(
       CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), count);
   return out;
+}
+
+void LaunchSurroundWizard()
+{
+  wchar_t exe[MAX_PATH] = {};
+  const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  std::wstring path;
+  if (n > 0 && n < MAX_PATH)
+  {
+    path.assign(exe, n);
+    const size_t slash = path.find_last_of(L"\\/");
+    if (slash != std::wstring::npos)
+      path = path.substr(0, slash + 1) + L"OHL-Control.exe";
+    else
+      path = L"OHL-Control.exe";
+  }
+  else
+  {
+    path = L"OHL-Control.exe";
+  }
+
+  ShellExecuteW(
+      nullptr, L"open", path.c_str(), L"--surround-wizard", nullptr, SW_SHOWNORMAL);
 }
 
 void UpdateCaptureUi(HWND hwnd, const std::string& response)
@@ -1189,12 +1214,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       mix(Button(hwnd, kRecallA, L"A  \u25B6", 205, 665, 70, 32));
       mix(Button(hwnd, kStoreB, L"STORE B", 282, 665, 90, 32));
       mix(Button(hwnd, kRecallB, L"B  \u25B6", 379, 665, 72, 32));
-      mix(Button(hwnd, kCapture, L"CAPTURE 15s", 112, 712, 125, 32));
+      mix(Button(hwnd, kSurroundWizard, L"SURROUND WIZARD", 36, 712, 150, 32));
+      mix(Button(hwnd, kCapture, L"CAPTURE 15s", 196, 712, 120, 32));
       HWND captureState = CreateWindowW(
           kOhlCardLabelClass,
           L"READY",
           WS_CHILD | WS_VISIBLE,
-          250, 718, 225, 22,
+          329, 718, 146, 22,
           hwnd,
           reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCaptureState)),
           nullptr,
@@ -1399,6 +1425,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             hwnd, kEnable, BM_SETCHECK,
             checked == BST_CHECKED ? BST_UNCHECKED : BST_CHECKED, 0);
         SetDlgItemTextW(hwnd, kStatus, L"OHL Music enable state changed. Press APPLY LIVE to commit.");
+        return 0;
+      }
+
+      if (id == kSurroundWizard)
+      {
+        LaunchSurroundWizard();
+        SetDlgItemTextW(hwnd, kStatus, L"Surround Wizard opened — diagnostic tones bypass OHL Music while active.");
         return 0;
       }
 
