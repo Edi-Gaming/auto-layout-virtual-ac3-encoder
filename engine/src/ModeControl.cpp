@@ -268,7 +268,8 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
                               std::atomic<RuntimeAudioMode>* current,
                               std::string* lastError,
                               std::mutex* errorMutex,
-                              std::atomic_bool* reloadConfig)
+                              std::atomic_bool* reloadConfig,
+                              MusicTelemetry* musicTelemetry)
 {
   if (thread_.joinable())
     return true;
@@ -278,6 +279,7 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
   lastError_ = lastError;
   errorMutex_ = errorMutex;
   reloadConfig_ = reloadConfig;
+  musicTelemetry_ = musicTelemetry;
   stop_.store(false);
 
   try
@@ -357,6 +359,10 @@ void ModeControlServer::ThreadProc()
         if (reloadConfig_)
           reloadConfig_->store(true);
         response = "ok";
+      }
+      else if (command == "metrics")
+      {
+        response = musicTelemetry_ ? musicTelemetry_->ToCompactString() : "offline";
       }
       else if (command == "status")
       {
