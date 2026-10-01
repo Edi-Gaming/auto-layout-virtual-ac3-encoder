@@ -70,8 +70,8 @@ static std::string Trim(const std::string& s)
 // Keys: in, in_id, out, out_id, bitrate, safe, loopback, out_spdif, upmix,
 //       layout, auto_threshold_db, auto_hold_ms, tray, stereo_processing,
 //       music_surround_gain, music_width_floor, music_ambience_*, music_diffuse_threshold,
- //       music_front_lock, music_rear_budget, music_direct_*, music_center_*, music_rear_*,
- //       music_distance_*_in.
+ //       music_spectral_intelligence, music_spatial_bin_threshold, music_front_lock,
+ //       music_rear_budget, music_direct_*, music_center_*, music_rear_*, music_distance_*_in.
 static void LoadConfigFile(const std::string& path, Config& c)
 {
   std::ifstream f(path);
@@ -107,6 +107,8 @@ static void LoadConfigFile(const std::string& path, Config& c)
     else if (k == "music_ambience_attack_ms") c.musicAmbienceAttackMs = std::strtod(v.c_str(), nullptr);
     else if (k == "music_ambience_release_ms") c.musicAmbienceReleaseMs = std::strtod(v.c_str(), nullptr);
     else if (k == "music_diffuse_threshold") c.musicDiffuseThreshold = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_spectral_intelligence") c.musicSpectralIntelligence = std::strtod(v.c_str(), nullptr);
+    else if (k == "music_spatial_bin_threshold") c.musicSpatialBinThreshold = std::strtod(v.c_str(), nullptr);
     else if (k == "music_front_lock") c.musicFrontLock = std::strtod(v.c_str(), nullptr);
     else if (k == "music_rear_budget") c.musicRearBudget = std::strtod(v.c_str(), nullptr);
     else if (k == "music_direct_reject") c.musicDirectReject = std::strtod(v.c_str(), nullptr);
@@ -185,6 +187,10 @@ static void ParseArgs(int argc, char** argv, Config& c)
       c.musicFrontLock = std::strtod(argv[++i], nullptr);
     else if (a == "--music-diffuse-threshold" && i + 1 < argc)
       c.musicDiffuseThreshold = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-spectral-intelligence" && i + 1 < argc)
+      c.musicSpectralIntelligence = std::strtod(argv[++i], nullptr);
+    else if (a == "--music-spatial-bin-threshold" && i + 1 < argc)
+      c.musicSpatialBinThreshold = std::strtod(argv[++i], nullptr);
     else if (a == "--music-rear-budget" && i + 1 < argc)
       c.musicRearBudget = std::strtod(argv[++i], nullptr);
     else if (a == "--music-direct-reject" && i + 1 < argc)
@@ -222,6 +228,8 @@ static bool ValidateConfig(const Config& cfg)
       cfg.musicAmbienceAttackMs < 5.0 || cfg.musicAmbienceAttackMs > 5000.0 ||
       cfg.musicAmbienceReleaseMs < 10.0 || cfg.musicAmbienceReleaseMs > 10000.0 ||
       cfg.musicDiffuseThreshold < 0.0 || cfg.musicDiffuseThreshold >= 1.0 ||
+      cfg.musicSpectralIntelligence < 0.0 || cfg.musicSpectralIntelligence > 1.0 ||
+      cfg.musicSpatialBinThreshold < 0.0 || cfg.musicSpatialBinThreshold > 1.0 ||
       cfg.musicFrontLock < 0.0 || cfg.musicFrontLock > 1.0 ||
       cfg.musicRearBudget <= 0.0 || cfg.musicRearBudget > 1.0 ||
       cfg.musicDirectReject < 0.0 || cfg.musicDirectReject > 1.0 ||
@@ -406,6 +414,8 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   pp.musicAmbienceAttackMs = cfg.musicAmbienceAttackMs;
   pp.musicAmbienceReleaseMs = cfg.musicAmbienceReleaseMs;
   pp.musicDiffuseThreshold = cfg.musicDiffuseThreshold;
+  pp.musicSpectralIntelligence = cfg.musicSpectralIntelligence;
+  pp.musicSpatialBinThreshold = cfg.musicSpatialBinThreshold;
   pp.musicFrontLock = cfg.musicFrontLock;
   pp.musicRearBudget = cfg.musicRearBudget;
   pp.musicDirectReject = cfg.musicDirectReject;
@@ -430,11 +440,12 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(const Config& cfg, st
   {
     if (pp.musicStereo)
       std::printf("Stereo  : OHL Music 5.1 (adaptive %.2f, side-width %.2f, "
-                  "bands %.2f/%.2f/%.2f, diffuse-threshold %.2f, front-lock %.2f, "
-                  "rear-budget %.2f, direct %.2f, center %.2f)\n",
+                  "bands %.2f/%.2f/%.2f, diffuse-threshold %.2f, spectral %.2f/bin %.2f, "
+                  "front-lock %.2f, rear-budget %.2f, direct %.2f, center %.2f)\n",
                   pp.musicSurroundGain, pp.musicWidthFloor,
                   pp.musicAmbienceLowWeight, pp.musicAmbienceMidWeight, pp.musicAmbienceHighWeight,
-                  pp.musicDiffuseThreshold, pp.musicFrontLock, pp.musicRearBudget,
+                  pp.musicDiffuseThreshold, pp.musicSpectralIntelligence,
+                  pp.musicSpatialBinThreshold, pp.musicFrontLock, pp.musicRearBudget,
                   pp.musicDirectReject, pp.musicCenterTrebleGain);
     else
       std::printf("Stereo  : receiver processing via genuine AC3 2.0\n");
