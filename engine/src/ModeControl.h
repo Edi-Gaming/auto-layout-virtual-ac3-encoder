@@ -7,6 +7,7 @@
 
 #include "MusicTelemetry.h"
 #include "MusicCaptureLogger.h"
+#include "SurroundTestState.h"
 
 enum class RuntimeAudioMode
 {
@@ -35,7 +36,8 @@ public:
              std::mutex* errorMutex,
              std::atomic_bool* reloadConfig,
              MusicTelemetry* musicTelemetry,
-             MusicCaptureLogger* musicCaptureLogger);
+             MusicCaptureLogger* musicCaptureLogger,
+             SurroundTestState* surroundTestState);
   void Stop();
 
 private:
@@ -48,6 +50,7 @@ private:
   std::atomic_bool* reloadConfig_ = nullptr;
   MusicTelemetry* musicTelemetry_ = nullptr;
   MusicCaptureLogger* musicCaptureLogger_ = nullptr;
+  SurroundTestState* surroundTestState_ = nullptr;
 
   std::atomic_bool stop_{false};
   std::thread thread_;
