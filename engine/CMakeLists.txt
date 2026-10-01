@@ -119,6 +119,7 @@ add_executable(ohl_ui WIN32
   src/MusicSettings.cpp
   src/MusicSettings.h
 )
+set_target_properties(ohl_ui PROPERTIES OUTPUT_NAME "OHL-Control")
 target_link_libraries(ohl_ui PRIVATE user32 gdi32 shell32 comctl32)
 if(MSVC)
   target_compile_options(ohl_ui PRIVATE /permissive-)
