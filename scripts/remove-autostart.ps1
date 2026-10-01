@@ -1,13 +1,4 @@
-<#
-.SYNOPSIS
-  Removes the "set and forget" autostart: deletes the Startup-folder supervisor, stops the
-  engine, and (best effort) removes any leftover Scheduled Task. Optionally deletes the
-  staged install folder. No elevation needed for the Startup-folder removal.
-
-.EXAMPLE
-  scripts\remove-autostart.ps1
-  scripts\remove-autostart.ps1 -DeleteInstall
-#>
+# Removes every known OHL / legacy Virtual AC3 Encoder autostart mechanism and stops the engines.
 [CmdletBinding()]
 param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'virtual-ac3-encoder'),
@@ -15,23 +6,68 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 
-# 1. Remove the Startup-folder supervisor so it won't relaunch.
-$vbsPath = Join-Path ([Environment]::GetFolderPath('Startup')) 'VirtualAc3Encoder.vbs'
-if (Test-Path $vbsPath) { Remove-Item $vbsPath -Force; Write-Host "Removed $vbsPath" }
+$startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+$legacyInstallDir = Join-Path $env:LOCALAPPDATA 'Virtual AC3 Encoder'
 
-# 2. Stop the supervisor + engine.
-Get-CimInstance Win32_Process -Filter "Name='wscript.exe' OR Name='engine.exe'" |
-  Where-Object { $_.CommandLine -like "*virtual-ac3-encoder*" -or $_.CommandLine -like "*VirtualAc3Encoder*" } |
-  ForEach-Object { $_ | Invoke-CimMethod -MethodName Terminate | Out-Null; Write-Host "Stopped $($_.Name) PID $($_.ProcessId)" }
+foreach ($p in @(
+  (Join-Path $startup 'VirtualAc3Encoder.vbs'),
+  (Join-Path $startup 'Virtual AC3 Encoder.lnk'),
+  (Join-Path $startup 'OHL Virtual AC3 Encoder.lnk')
+)) {
+  if (Test-Path $p) {
+    Remove-Item $p -Force
+    Write-Host "Removed startup entry: $p"
+  }
+}
 
-# 3. Remove any leftover Scheduled Task from earlier versions (needs elevation; ignore if absent).
-if (Get-ScheduledTask -TaskName VirtualAc3Encoder -EA SilentlyContinue) {
-  try { Unregister-ScheduledTask -TaskName VirtualAc3Encoder -Confirm:$false; Write-Host "Removed scheduled task." }
-  catch { Write-Warning "Leftover scheduled task 'VirtualAc3Encoder' exists; remove it elevated: Unregister-ScheduledTask -TaskName VirtualAc3Encoder -Confirm:`$false" }
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object {
+    ($_.Name -ieq 'engine.exe' -and (
+      ($_.ExecutablePath -and (
+        $_.ExecutablePath.StartsWith($InstallDir, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $_.ExecutablePath.StartsWith($legacyInstallDir, [System.StringComparison]::OrdinalIgnoreCase)
+      )) -or
+      ($_.CommandLine -and (
+        $_.CommandLine -like '*virtual-ac3-encoder*' -or
+        $_.CommandLine -like '*Virtual AC3 Encoder*'
+      ))
+    )) -or
+    ($_.Name -ieq 'wscript.exe' -and $_.CommandLine -and (
+      $_.CommandLine -like '*VirtualAc3Encoder*' -or
+      $_.CommandLine -like '*Virtual AC3 Encoder*'
+    ))
+  } |
+  ForEach-Object {
+    try {
+      $_ | Invoke-CimMethod -MethodName Terminate | Out-Null
+      Write-Host "Stopped $($_.Name) PID $($_.ProcessId)"
+    } catch {}
+  }
+
+foreach ($taskName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder')) {
+  try {
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+      Write-Host "Removed scheduled task: $taskName"
+    }
+  } catch {
+    Write-Warning "Could not remove scheduled task '$taskName'."
+  }
+}
+
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+foreach ($valueName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder', 'OHL Virtual AC3 Encoder')) {
+  try {
+    if ($null -ne (Get-ItemProperty -Path $runKey -Name $valueName -ErrorAction SilentlyContinue)) {
+      Remove-ItemProperty -Path $runKey -Name $valueName -ErrorAction Stop
+      Write-Host "Removed HKCU Run entry: $valueName"
+    }
+  } catch {}
 }
 
 if ($DeleteInstall -and (Test-Path $InstallDir)) {
   Remove-Item $InstallDir -Recurse -Force
   Write-Host "Deleted $InstallDir."
 }
-Write-Host "Done."
+
+Write-Host 'Done.'

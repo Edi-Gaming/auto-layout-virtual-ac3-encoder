@@ -1,0 +1,461 @@
+# Installs/updates the CI portable build as the user's day-to-day OHL Virtual AC3 Encoder.
+# No admin rights required. Existing virtual-ac3-encoder.conf is preserved.
+[CmdletBinding()]
+param(
+  [string]$SourceDir = '',
+  [string]$InstallDir = ''
+)
+
+$ErrorActionPreference = 'Stop'
+
+# Resolve paths defensively. Some Windows/PowerShell installations can return an empty string
+# from Environment.GetFolderPath for Start Menu folders, and Join-Path refuses an empty -Path.
+if ([string]::IsNullOrWhiteSpace($SourceDir)) {
+  $SourceDir = $PSScriptRoot
+}
+if ([string]::IsNullOrWhiteSpace($SourceDir)) {
+  $SourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+if ([string]::IsNullOrWhiteSpace($SourceDir)) {
+  throw 'Could not determine the extracted build folder.'
+}
+
+$localAppData = $env:LOCALAPPDATA
+if ([string]::IsNullOrWhiteSpace($localAppData)) {
+  $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+}
+if ([string]::IsNullOrWhiteSpace($localAppData)) {
+  throw 'Could not resolve LOCALAPPDATA.'
+}
+
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+  $InstallDir = Join-Path $localAppData 'virtual-ac3-encoder'
+}
+
+$roamingAppData = $env:APPDATA
+if ([string]::IsNullOrWhiteSpace($roamingAppData)) {
+  $roamingAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+}
+if ([string]::IsNullOrWhiteSpace($roamingAppData)) {
+  throw 'Could not resolve APPDATA.'
+}
+
+$startMenuRoot = Join-Path $roamingAppData 'Microsoft\Windows\Start Menu'
+$programsDir = Join-Path $startMenuRoot 'Programs'
+$startup = Join-Path $programsDir 'Startup'
+
+# Known legacy install/startup locations from the original upstream installer and older OHL
+# development builds. The day-to-day installer migrates these to one authoritative startup entry.
+$legacyInstallDir = Join-Path $localAppData 'Virtual AC3 Encoder'
+$legacyStartupVbs = Join-Path $startup 'VirtualAc3Encoder.vbs'
+$legacyStartupLnk = Join-Path $startup 'Virtual AC3 Encoder.lnk'
+$ohlStartupLnk = Join-Path $startup 'OHL Virtual AC3 Encoder.lnk'
+
+$engineSrc = Join-Path $SourceDir 'engine.exe'
+$uiSrc = Join-Path $SourceDir 'OHL-Control.exe'
+if (-not (Test-Path $engineSrc)) {
+  throw "engine.exe not found next to this script: $engineSrc"
+}
+if (-not (Test-Path $uiSrc)) {
+  throw "OHL-Control.exe not found next to this script: $uiSrc"
+}
+
+$startMenuDir = Join-Path $programsDir 'OHL Virtual AC3 Encoder'
+$shortcutPath = Join-Path $startMenuDir 'Audio Mode Switcher.lnk'
+$startShortcutPath = Join-Path $startMenuDir 'Start OHL Encoder.lnk'
+
+Write-Host "Source folder     -> $SourceDir"
+Write-Host "Install folder    -> $InstallDir"
+Write-Host "Startup folder    -> $startup"
+Write-Host "Start Menu folder -> $programsDir"
+Write-Host ''
+Write-Host 'Migrating legacy autostart and stopping old OHL processes...'
+
+$knownRoots = @($InstallDir, $legacyInstallDir) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+$stoppedProcessIds = @()
+
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object {
+    $p = $_
+    $knownEngine = $false
+    if ($p.Name -ieq 'engine.exe') {
+      foreach ($root in $knownRoots) {
+        if ($p.ExecutablePath -and $p.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+          $knownEngine = $true
+          break
+        }
+      }
+      if (-not $knownEngine -and $p.CommandLine) {
+        $knownEngine = (
+          $p.CommandLine -like '*virtual-ac3-encoder*' -or
+          $p.CommandLine -like '*Virtual AC3 Encoder*'
+        )
+      }
+    }
+
+    $knownUi = $false
+    if ($p.Name -ieq 'OHL-Control.exe') {
+      foreach ($root in $knownRoots) {
+        if ($p.ExecutablePath -and $p.ExecutablePath.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+          $knownUi = $true
+          break
+        }
+      }
+      if (-not $knownUi -and $p.CommandLine) {
+        $knownUi = (
+          $p.CommandLine -like '*OHL-Control.exe*' -and (
+            $p.CommandLine -like '*virtual-ac3-encoder*' -or
+            $p.CommandLine -like '*Virtual AC3 Encoder*'
+          )
+        )
+      }
+    }
+
+    $knownWscript = (
+      $p.Name -ieq 'wscript.exe' -and $p.CommandLine -and (
+        $p.CommandLine -like '*VirtualAc3Encoder*' -or
+        $p.CommandLine -like '*Virtual AC3 Encoder*' -or
+        $p.CommandLine -like '*virtual-ac3-encoder*'
+      )
+    )
+
+    $knownEngine -or $knownUi -or $knownWscript
+  } |
+  ForEach-Object {
+    try {
+      $processId = [int]$_.ProcessId
+      Write-Host "  stopping $($_.Name) PID $processId"
+      $stoppedProcessIds += $processId
+      $_ | Invoke-CimMethod -MethodName Terminate | Out-Null
+    } catch {}
+  }
+
+# Termination is asynchronous. Wait for every process we asked to stop so Windows has released
+# executable image handles before we overwrite engine.exe / OHL-Control.exe.
+foreach ($processId in @($stoppedProcessIds | Select-Object -Unique)) {
+  try {
+    Wait-Process -Id $processId -Timeout 5 -ErrorAction SilentlyContinue
+  } catch {}
+}
+Start-Sleep -Milliseconds 200
+
+# Remove every known legacy Startup mechanism before installing the one authoritative OHL link.
+foreach ($legacyPath in @($legacyStartupVbs, $legacyStartupLnk, $ohlStartupLnk)) {
+  if (Test-Path $legacyPath) {
+    Remove-Item $legacyPath -Force
+    Write-Host "  removed startup entry: $legacyPath"
+  }
+}
+
+# Older development revisions also used a Scheduled Task. Remove it when possible.
+foreach ($taskName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder')) {
+  try {
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($task) {
+      Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+      Write-Host "  removed scheduled task: $taskName"
+    }
+  } catch {
+    Write-Warning "Could not remove legacy scheduled task '$taskName'. If it still exists, remove it from Task Scheduler."
+  }
+}
+
+# Best-effort cleanup for old HKCU Run entries from experimental builds.
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+foreach ($valueName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder', 'OHL Virtual AC3 Encoder')) {
+  try {
+    $value = Get-ItemProperty -Path $runKey -Name $valueName -ErrorAction SilentlyContinue
+    if ($null -ne $value) {
+      Remove-ItemProperty -Path $runKey -Name $valueName -ErrorAction Stop
+      Write-Host "  removed HKCU Run entry: $valueName"
+    }
+  } catch {}
+}
+
+function Copy-WithRetry {
+  param(
+    [Parameter(Mandatory=$true)][string]$Source,
+    [Parameter(Mandatory=$true)][string]$Destination,
+    [int]$Attempts = 8
+  )
+
+  for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+    try {
+      Copy-Item -Path $Source -Destination $Destination -Force -ErrorAction Stop
+      return
+    } catch {
+      if ($attempt -ge $Attempts) {
+        throw
+      }
+      Write-Host "  copy busy; retrying $([IO.Path]::GetFileName($Source)) ($attempt/$Attempts)..."
+      Start-Sleep -Milliseconds (150 * $attempt)
+    }
+  }
+}
+
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+Copy-WithRetry -Source $engineSrc -Destination $InstallDir
+Copy-WithRetry -Source $uiSrc -Destination $InstallDir
+Get-ChildItem -Path $SourceDir -Filter '*.dll' -File | ForEach-Object {
+  Copy-WithRetry -Source $_.FullName -Destination $InstallDir
+}
+
+$configDst = Join-Path $InstallDir 'virtual-ac3-encoder.conf'
+$configSrc = Join-Path $SourceDir 'virtual-ac3-encoder.conf'
+if (-not (Test-Path $configDst)) {
+  if (Test-Path $configSrc) {
+    Copy-Item $configSrc $configDst
+  } else {
+    Set-Content -Path $configDst -Encoding UTF8 -Value @(
+      '# OHL Virtual AC3 Encoder configuration'
+      'in=CABLE Output'
+      'out=Realtek Digital Output'
+      'bitrate=640000'
+      'loopback=0'
+      'layout=auto'
+      'auto_threshold_db=-60'
+      'auto_hold_ms=2000'
+      'tray=1'
+    )
+  }
+}
+
+$configText = Get-Content $configDst -Raw
+if ($configText -notmatch '(?m)^\s*tray\s*=') {
+  Add-Content -Path $configDst -Encoding UTF8 -Value @(
+    ''
+    '# Windows notification-area controller'
+    'tray=1'
+  )
+}
+
+# Preserve existing audio behavior on upgrade, but make the experimental OHL Music profile
+# discoverable/configurable in the installed file. Receiver mode is deliberately the safe default.
+if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
+  Add-Content -Path $configDst -Encoding UTF8 -Value @(
+    ''
+    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.11'
+    'stereo_processing=receiver'
+    'music_surround_gain=0.70'
+    'music_width_floor=0.16'
+    'music_ambience_low_weight=0.08'
+    'music_ambience_mid_weight=0.46'
+    'music_ambience_high_weight=0.46'
+    'music_ambience_attack_ms=100'
+    'music_ambience_release_ms=520'
+    'music_diffuse_threshold=0.10'
+    'music_spectral_intelligence=0.90'
+    'music_spatial_bin_threshold=0.30'
+    'music_per_bin_routing=0.55'
+    'music_spectral_acquire_ms=65'
+    'music_spectral_release_ms=520'
+    'music_dimension=0.00'
+    'music_center_width=1.00'
+    'music_steering_low=0.18'
+    'music_steering_body=0.55'
+    'music_steering_presence=0.90'
+    'music_steering_air=1.10'
+    'music_front_lock_low=0.30'
+    'music_front_lock_body=1.00'
+    'music_front_lock_presence=0.82'
+    'music_front_lock_air=0.25'
+    'music_front_lock=0.88'
+    'music_rear_budget=0.22'
+    'music_direct_reject=0.78'
+    'music_direct_threshold=1.45'
+    'music_direct_recovery_ms=18'
+    'music_center_treble_gain=0.18'
+    'music_center_treble_hz=2400'
+    'music_center_lowpass_hz=16000'
+    'music_rear_highpass_hz=160'
+    'music_rear_lowpass_hz=18000'
+    'music_rear_left_trim=1.00'
+    'music_rear_right_trim=1.00'
+    '# Listening-position speaker distances in inches'
+    'music_distance_fl_in=33'
+    'music_distance_fr_in=33'
+    'music_distance_c_in=30'
+    'music_distance_lfe_in=33'
+    'music_distance_sl_in=27'
+    'music_distance_sr_in=33'
+  )
+}
+
+# Existing installs keep every value the user has already tuned. Add only controls that did not
+# exist in that installed generation.
+$configText = Get-Content $configDst -Raw
+$musicUpgradeDefaults = @(
+  @('music_width_floor', '0.16'),
+  @('music_ambience_low_weight', '0.08'),
+  @('music_ambience_mid_weight', '0.46'),
+  @('music_ambience_high_weight', '0.46'),
+  @('music_ambience_attack_ms', '100'),
+  @('music_ambience_release_ms', '520'),
+  @('music_diffuse_threshold', '0.10'),
+  @('music_spectral_intelligence', '0.90'),
+  @('music_spatial_bin_threshold', '0.30'),
+  @('music_per_bin_routing', '0.55'),
+  @('music_spectral_acquire_ms', '65'),
+  @('music_spectral_release_ms', '520'),
+  @('music_dimension', '0.00'),
+  @('music_center_width', '1.00'),
+  @('music_steering_low', '0.18'),
+  @('music_steering_body', '0.55'),
+  @('music_steering_presence', '0.90'),
+  @('music_steering_air', '1.10'),
+  @('music_front_lock_low', '0.30'),
+  @('music_front_lock_body', '1.00'),
+  @('music_front_lock_presence', '0.82'),
+  @('music_front_lock_air', '0.25'),
+  @('music_front_lock', '0.88'),
+  @('music_rear_budget', '0.22'),
+  @('music_direct_reject', '0.78'),
+  @('music_direct_threshold', '1.45'),
+  @('music_direct_recovery_ms', '18'),
+  @('music_center_treble_gain', '0.18'),
+  @('music_center_treble_hz', '2400'),
+  @('music_center_lowpass_hz', '16000'),
+  @('music_rear_highpass_hz', '160'),
+  @('music_rear_lowpass_hz', '18000'),
+  @('music_rear_left_trim', '1.00'),
+  @('music_rear_right_trim', '1.00')
+)
+foreach ($pair in $musicUpgradeDefaults) {
+  $key = $pair[0]
+  $value = $pair[1]
+  if ($configText -notmatch ('(?m)^\s*' + [regex]::Escape($key) + '\s*=')) {
+    Add-Content -Path $configDst -Encoding UTF8 -Value ($key + '=' + $value)
+  }
+}
+
+# v0.8 changed two stock v0.7 safety values. Migrate ONLY exact untouched v0.7 defaults;
+# any user-tuned value is preserved. Keep this deliberately parser-simple.
+$configLines = @(Get-Content $configDst)
+$v08StockMigrations = @(
+  @('music_diffuse_threshold', '0.18', '0.10'),
+  @('music_rear_budget', '0.16', '0.22')
+)
+$didV08Migration = $false
+foreach ($triple in $v08StockMigrations) {
+  $key = $triple[0]
+  $old = $triple[1]
+  $new = $triple[2]
+  $pattern = '^\s*' + [regex]::Escape($key) + '\s*=\s*' + [regex]::Escape($old) + '\s*$'
+  for ($i = 0; $i -lt $configLines.Count; $i++) {
+    if ($configLines[$i] -match $pattern) {
+      $configLines[$i] = $key + '=' + $new
+      $didV08Migration = $true
+      Write-Host "  migrated stock v0.7 $key=$old -> $new"
+    }
+  }
+}
+if ($didV08Migration) {
+  Set-Content -Path $configDst -Encoding UTF8 -Value $configLines
+}
+
+$exePath = Join-Path $InstallDir 'engine.exe'
+$uiPath = Join-Path $InstallDir 'OHL-Control.exe'
+$logPath = Join-Path $InstallDir 'engine.log'
+$launcherPath = Join-Path $InstallDir 'OHL-Autostart.vbs'
+
+# One-shot hidden launcher. This is intentionally NOT a supervisor/watchdog: it starts the
+# exact installed OHL engine once, hidden, and exits immediately.
+Set-Content -Path $launcherPath -Encoding ASCII -Value @(
+  "' OHL Virtual AC3 Encoder one-shot hidden launcher."
+  'Set sh = CreateObject("WScript.Shell")'
+  'q = Chr(34)'
+  "appPath = ""$exePath"""
+  "logFile = ""$logPath"""
+  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
+)
+
+New-Item -ItemType Directory -Force -Path $startup | Out-Null
+New-Item -ItemType Directory -Force -Path $startMenuDir | Out-Null
+$ws = New-Object -ComObject WScript.Shell
+
+# One authoritative logon path. Windows Startup runs a tiny one-shot WScript launcher so
+# engine.exe gets no persistent console window. The launcher itself targets THIS exact OHL install.
+$wscriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
+$startupShortcut = $ws.CreateShortcut($ohlStartupLnk)
+$startupShortcut.TargetPath = $wscriptPath
+$startupShortcut.Arguments = '"' + $launcherPath + '"'
+$startupShortcut.WorkingDirectory = $InstallDir
+$startupShortcut.Description = 'OHL Virtual AC3 Encoder - hidden day-to-day engine'
+$startupShortcut.IconLocation = $exePath + ',0'
+$startupShortcut.Save()
+
+# Verify the authoritative startup entry points at our hidden launcher, not an old engine tree.
+$startupCheck = $ws.CreateShortcut($ohlStartupLnk)
+if (-not [string]::Equals($startupCheck.TargetPath, $wscriptPath, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $startupCheck.Arguments -notlike "*$launcherPath*") {
+  throw "Startup shortcut verification failed. Expected WScript -> '$launcherPath'."
+}
+Write-Host "  startup target verified: $($startupCheck.TargetPath) $($startupCheck.Arguments)"
+
+$shortcut = $ws.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $uiPath
+$shortcut.Arguments = ''
+$shortcut.WorkingDirectory = $InstallDir
+$shortcut.Description = 'OHL Virtual AC3 Encoder - Surround / Guitar mode switcher'
+$shortcut.IconLocation = $exePath + ',0'
+$shortcut.Save()
+
+# Manual recovery shortcut: safe to click whenever the engine was exited/closed.
+$startShortcut = $ws.CreateShortcut($startShortcutPath)
+$startShortcut.TargetPath = $wscriptPath
+$startShortcut.Arguments = '"' + $launcherPath + '"'
+$startShortcut.WorkingDirectory = $InstallDir
+$startShortcut.Description = 'Start OHL Virtual AC3 Encoder hidden'
+$startShortcut.IconLocation = $exePath + ',0'
+$startShortcut.Save()
+
+Write-Host "Installed engine -> $InstallDir"
+Write-Host "No-console UI    -> $uiPath"
+Write-Host "Preserved config  -> $configDst"
+Write-Host "Tray control      -> enabled"
+Write-Host "Mode shortcut     -> $shortcutPath"
+Write-Host "Start shortcut    -> $startShortcutPath"
+Write-Host "Authoritative startup -> $ohlStartupLnk"
+Write-Host ''
+Write-Host 'Preflight: launching the staged engine directly...'
+
+# Run a tiny foreground preflight before hiding it behind wscript. If Windows cannot load the EXE
+# at all (for example a missing VC runtime DLL), main() never runs and engine.log cannot exist.
+$preflight = Start-Process -FilePath $exePath -ArgumentList '--version' -WorkingDirectory $InstallDir -Wait -PassThru
+if ($preflight.ExitCode -ne 0) {
+  $hex = ('0x{0:X8}' -f ([uint32]$preflight.ExitCode))
+  throw "engine.exe failed before daemon startup. Exit code: $($preflight.ExitCode) ($hex). This is usually a loader/dependency problem; the build should include its MSVC runtime DLLs."
+}
+
+Write-Host 'Preflight passed.'
+Write-Host 'Starting background engine directly...'
+
+# Launch the real daemon directly. Logon autostart uses the OHL Startup shortcut created above;
+# there is no WScript supervisor in the day-to-day path anymore.
+$daemonArgs = '--hidden --log "' + $logPath + '"'
+$daemon = Start-Process -FilePath $exePath -ArgumentList $daemonArgs -WorkingDirectory $InstallDir -WindowStyle Hidden -PassThru
+Start-Sleep -Seconds 2
+
+if ($daemon.HasExited) {
+  $exitCode = $daemon.ExitCode
+  $hex = ('0x{0:X8}' -f ([uint32]$exitCode))
+  if (Test-Path $logPath) {
+    Write-Host ''
+    Write-Host '----- engine.log -----'
+    Get-Content $logPath -Tail 120 | ForEach-Object { Write-Host $_ }
+    Write-Host '----------------------'
+    throw "engine.exe exited during daemon startup. Exit code: $exitCode ($hex). The last engine.log lines are above."
+  }
+  throw "engine.exe exited during daemon startup with exit code $exitCode ($hex), and no engine.log was created."
+}
+
+$running = @(Get-CimInstance Win32_Process -Filter "Name='engine.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.ExecutablePath -like "$InstallDir*" }).Count -gt 0
+
+if (-not $running) {
+  throw "engine.exe was launched but could not be found in the process table after 2 seconds."
+}
+
+Write-Host ''
+Write-Host 'OHL Virtual AC3 Encoder is running.'
+Write-Host 'Use the notification-area icon to switch SURROUND / GUITAR modes.'

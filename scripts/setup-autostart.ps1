@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   "Set and forget": installs the engine to a stable per-user location, writes a config file,
-  and autostarts it hidden at logon via a Startup-folder supervisor (restarts it if it exits).
+  and autostarts it hidden at logon via a one-shot WScript launcher targeting this engine.
 
   Uses the Startup folder (not Task Scheduler): it runs in the real interactive logon session
   where WASAPI + a hidden console work, and needs NO elevation.
@@ -27,11 +27,35 @@ $ErrorActionPreference = 'Stop'
 $engineSrc = Join-Path $BuildDir 'engine.exe'
 if (-not (Test-Path $engineSrc)) { throw "engine.exe not found at $engineSrc. Build the engine first." }
 
-# 0. Stop any running instance (engine + Startup supervisor) FIRST, so we can overwrite the
-#    staged exe/DLLs on a re-run/update (otherwise the copy fails: file in use).
-Get-CimInstance Win32_Process -Filter "Name='engine.exe' OR Name='wscript.exe'" |
-  Where-Object { $_.CommandLine -like "*virtual-ac3-encoder*" -or $_.CommandLine -like "*VirtualAc3Encoder*" } |
-  ForEach-Object { $_ | Invoke-CimMethod -MethodName Terminate | Out-Null }
+# 0. Migrate legacy startup mechanisms and stop known encoder instances FIRST.
+$startup = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
+$legacyInstallDir = Join-Path $env:LOCALAPPDATA 'Virtual AC3 Encoder'
+$legacyVbs = Join-Path $startup 'VirtualAc3Encoder.vbs'
+$legacyLnk = Join-Path $startup 'Virtual AC3 Encoder.lnk'
+$ohlLnk = Join-Path $startup 'OHL Virtual AC3 Encoder.lnk'
+
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object {
+    ($_.Name -ieq 'engine.exe' -and (
+      ($_.ExecutablePath -and (
+        $_.ExecutablePath.StartsWith($InstallDir, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $_.ExecutablePath.StartsWith($legacyInstallDir, [System.StringComparison]::OrdinalIgnoreCase)
+      )) -or
+      ($_.CommandLine -and (
+        $_.CommandLine -like '*virtual-ac3-encoder*' -or
+        $_.CommandLine -like '*Virtual AC3 Encoder*'
+      ))
+    )) -or
+    ($_.Name -ieq 'wscript.exe' -and $_.CommandLine -and (
+      $_.CommandLine -like '*VirtualAc3Encoder*' -or
+      $_.CommandLine -like '*Virtual AC3 Encoder*'
+    ))
+  } |
+  ForEach-Object { try { $_ | Invoke-CimMethod -MethodName Terminate | Out-Null } catch {} }
+
+foreach ($p in @($legacyVbs, $legacyLnk, $ohlLnk)) {
+  if (Test-Path $p) { Remove-Item $p -Force }
+}
 Start-Sleep -Milliseconds 600
 
 # 1. Stage engine.exe + FFmpeg DLLs (and the VC runtime, so it's self-contained) into a stable dir.
@@ -53,31 +77,40 @@ Set-Content -Path (Join-Path $InstallDir 'virtual-ac3-encoder.conf') -Encoding U
   "out=$Out"
   "bitrate=$Bitrate"
   "loopback=$([int][bool]$Loopback)"
+  "tray=1"
 )
 Write-Host "Wrote config (in='$In', out='$Out', bitrate=$Bitrate, loopback=$([bool]$Loopback))"
 
-# 3. Supervisor VBScript in the Startup folder: runs the engine hidden and restarts it on exit.
-#    The engine hides its own console (--hidden) and writes its own log (--log).
-$startup = [Environment]::GetFolderPath('Startup')
-$vbsPath = Join-Path $startup 'VirtualAc3Encoder.vbs'
-Set-Content -Path $vbsPath -Encoding ASCII -Value @(
-  "' Virtual AC3 Encoder autostart supervisor (runs hidden; restarts the engine if it exits)."
+# 3. Hidden one-shot launcher + authoritative Startup shortcut.
+#    WScript exists only to prevent a persistent console window; it is not a supervisor/watchdog.
+New-Item -ItemType Directory -Force -Path $startup | Out-Null
+$launcherPath = Join-Path $InstallDir 'OHL-Autostart.vbs'
+Set-Content -Path $launcherPath -Encoding ASCII -Value @(
+  "' OHL Virtual AC3 Encoder one-shot hidden launcher."
   'Set sh = CreateObject("WScript.Shell")'
   'q = Chr(34)'
   "appPath = ""$exePath"""
   "logFile = ""$logPath"""
-  'Do'
-  '  sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, True'
-  '  WScript.Sleep 5000'
-  'Loop'
+  'sh.Run q & appPath & q & " --hidden --log " & q & logFile & q, 0, False'
 )
-Write-Host "Installed Startup supervisor -> $vbsPath"
+
+$ws = New-Object -ComObject WScript.Shell
+$wscriptPath = Join-Path $env:WINDIR 'System32\wscript.exe'
+$startupShortcut = $ws.CreateShortcut($ohlLnk)
+$startupShortcut.TargetPath = $wscriptPath
+$startupShortcut.Arguments = '"' + $launcherPath + '"'
+$startupShortcut.WorkingDirectory = $InstallDir
+$startupShortcut.Description = 'OHL Virtual AC3 Encoder - hidden day-to-day engine'
+$startupShortcut.IconLocation = $exePath + ',0'
+$startupShortcut.Save()
+Write-Host "Installed authoritative hidden Startup shortcut -> $ohlLnk"
 
 # 4. Start it now (don't wait for the next logon).
 Get-CimInstance Win32_Process -Filter "Name='engine.exe'" |
   Where-Object { $_.CommandLine -like "*virtual-ac3-encoder*" } |
   ForEach-Object { $_ | Invoke-CimMethod -MethodName Terminate | Out-Null }
-Start-Process wscript -ArgumentList "`"$vbsPath`""
+$daemonArgs = '--hidden --log "' + $logPath + '"'
+Start-Process -FilePath $exePath -ArgumentList $daemonArgs -WorkingDirectory $InstallDir -WindowStyle Hidden
 Start-Sleep -Seconds 3
 $running = [bool](Get-CimInstance Win32_Process -Filter "Name='engine.exe'")
 Write-Host "Started. engine running: $running"

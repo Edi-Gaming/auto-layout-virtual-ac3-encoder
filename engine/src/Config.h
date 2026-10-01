@@ -1,6 +1,7 @@
 // Config.h — engine runtime configuration (CLI-driven for now; file-based in Phase 4).
 #pragma once
 
+#include <array>
 #include <string>
 
 struct Config
@@ -10,6 +11,7 @@ struct Config
   bool loopback = false; // capture the input as a RENDER endpoint via WASAPI loopback
                          // (the render-only virtual-driver architecture)
   bool monitor = false;  // capture-only diagnostic: report input throughput, then exit
+  bool tray = true;       // persistent background engine exposes a Windows notification-area icon
   int  monitorSeconds = 5;
   int  durationSeconds = 0; // 0 = run until Ctrl+C; otherwise auto-stop after N seconds
 
@@ -25,8 +27,67 @@ struct Config
   int64_t  bitRate = 640000;
   uint32_t safeFrames = 1536;
 
-  // Stereo->5.1 upmix mode for <=2ch input: "off" (swr default) or "surround"
-  // (FFmpeg `surround` FFT upmix). Multichannel input is always downmixed to 5.1.
-  // Default "surround": this tool targets a 5.1 optical path, so stereo sources use all speakers.
+  // Stereo->5.1 upmix mode for <=2ch input in fixed-5.1 mode: "off" (swr default) or
+  // "surround" (FFmpeg `surround` FFT upmix). In auto layout, genuine stereo is encoded
+  // as AC3 2.0 instead so the receiver can apply its own PLII/A.F.D. processing.
   std::string upmix = "surround";
+
+  // AC3 payload layout:
+  //   "auto" — inspect actual PCM activity; encode 2.0 until C/LFE/surround becomes active,
+  //            then switch to 5.1 and hold it until those channels stay quiet long enough.
+  //   "5.1"  — preserve upstream behavior: always encode AC3 5.1.
+  // This fork defaults to auto because that is its purpose; set layout=5.1 for compatibility.
+  std::string layout = "auto";
+  double   autoThresholdDb = -60.0;
+  uint32_t autoHoldMs = 2000;
+
+  // Stereo policy while layout=auto:
+  //   "receiver" — current hardware-validated behavior: emit genuine AC3 2.0 and let the AVR
+  //                apply PLII/A.F.D.
+  //   "music"    — OHL Music: preserve FL/FR, phantom center (silent C), no synthesized LFE,
+  //                derive a conservative surround bed, then emit discrete AC3 5.1.
+  std::string stereoProcessing = "receiver";
+  double musicSurroundGain = 0.70;
+  double musicWidthFloor = 0.16;
+
+  double musicAmbienceLowWeight = 0.08;
+  double musicAmbienceMidWeight = 0.46;
+  double musicAmbienceHighWeight = 0.46;
+  double musicAmbienceAttackMs = 100.0;
+  double musicAmbienceReleaseMs = 520.0;
+  double musicDiffuseThreshold = 0.10;
+  double musicSpectralIntelligence = 0.90;
+  double musicSpatialBinThreshold = 0.30;
+  double musicPerBinRouting = 0.55;
+  double musicSpectralAcquireMs = 65.0;
+  double musicSpectralReleaseMs = 520.0;
+  double musicDimension = 0.0;
+  double musicCenterWidth = 1.0;
+  std::array<double, 4> musicSpectralSteering{{0.18, 0.55, 0.90, 1.10}};
+  std::array<double, 4> musicSpectralFrontLock{{0.30, 1.00, 0.82, 0.25}};
+
+  double musicFrontLock = 0.88;
+  double musicRearBudget = 0.22;
+
+  double musicDirectReject = 0.78;
+  double musicDirectThreshold = 1.45;
+  double musicDirectRecoveryMs = 18.0;
+
+  double musicCenterTrebleGain = 0.18;
+  double musicCenterTrebleHz = 2400.0;
+  double musicCenterLowpassHz = 16000.0;
+
+  double musicRearHighpassHz = 160.0;
+  double musicRearLowpassHz = 18000.0;
+  double musicRearLeftTrim = 1.0;
+  double musicRearRightTrim = 1.0;
+
+  // Listening-position speaker distances in inches (Edi's 2026-09-29 measurements).
+  // The music DSP delays nearer speakers to the farthest measured distance before AC3 encode.
+  double musicDistanceFlIn = 33.0;
+  double musicDistanceFrIn = 33.0;
+  double musicDistanceCIn  = 30.0;
+  double musicDistanceLfeIn = 33.0; // unused while LFE is silent, kept for future profiles
+  double musicDistanceSlIn = 27.0;
+  double musicDistanceSrIn = 33.0;
 };

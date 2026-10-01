@@ -1,0 +1,61 @@
+#pragma once
+
+#include <atomic>
+#include <mutex>
+#include <string>
+#include <thread>
+
+#include "MusicTelemetry.h"
+#include "MusicCaptureLogger.h"
+#include "SurroundTestState.h"
+
+enum class RuntimeAudioMode
+{
+  Surround = 0,
+  Guitar,
+  Starting,
+  Stopping,
+  Error
+};
+
+const char* RuntimeAudioModeName(RuntimeAudioMode mode);
+
+// Sends one command to the already-running engine control pipe.
+// Commands: "surround", "guitar", "status", "reload", "metrics".
+bool SendModeCommand(const std::string& command, std::string& response, unsigned timeoutMs = 2000);
+
+class ModeControlServer
+{
+public:
+  ModeControlServer() = default;
+  ~ModeControlServer();
+
+  bool Start(std::atomic<RuntimeAudioMode>* desired,
+             std::atomic<RuntimeAudioMode>* current,
+             std::string* lastError,
+             std::mutex* errorMutex,
+             std::atomic_bool* reloadConfig,
+             MusicTelemetry* musicTelemetry,
+             MusicCaptureLogger* musicCaptureLogger,
+             SurroundTestState* surroundTestState);
+  void Stop();
+
+private:
+  void ThreadProc();
+
+  std::atomic<RuntimeAudioMode>* desired_ = nullptr;
+  std::atomic<RuntimeAudioMode>* current_ = nullptr;
+  std::string* lastError_ = nullptr;
+  std::mutex* errorMutex_ = nullptr;
+  std::atomic_bool* reloadConfig_ = nullptr;
+  MusicTelemetry* musicTelemetry_ = nullptr;
+  MusicCaptureLogger* musicCaptureLogger_ = nullptr;
+  SurroundTestState* surroundTestState_ = nullptr;
+
+  std::atomic_bool stop_{false};
+  std::thread thread_;
+};
+
+// Native two-button controller built into engine.exe. It talks to the persistent
+// background engine over the same named pipe used by --mode.
+int RunModeSwitcherGui();

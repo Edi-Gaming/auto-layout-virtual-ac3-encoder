@@ -15,7 +15,7 @@ AppPublisher=strepto42
 AppPublisherURL=https://github.com/strepto42/virtual-ac3-encoder
 AppSupportURL=https://github.com/strepto42/virtual-ac3-encoder/issues
 DefaultDirName={localappdata}\Virtual AC3 Encoder
-DefaultGroupName=Virtual AC3 Encoder
+DefaultGroupName=OHL Virtual AC3 Encoder
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
 WizardStyle=modern
@@ -41,6 +41,7 @@ Source: "{#SourceDir}\virtual-ac3-encoder.conf"; DestDir: "{app}"; Flags: onlyif
 ; Autostart hidden at logon via the self-locating supervisor:
 Name: "{userstartup}\Virtual AC3 Encoder"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\supervisor.vbs"""; WorkingDir: "{app}"
 ; Start Menu:
+Name: "{group}\\Audio mode switcher"; Filename: "{app}\\engine.exe"; Parameters: "--switcher"; WorkingDir: "{app}"
 Name: "{group}\Edit config";        Filename: "{win}\notepad.exe"; Parameters: """{app}\virtual-ac3-encoder.conf"""
 Name: "{group}\View log";           Filename: "{win}\notepad.exe"; Parameters: """{app}\engine.log"""
 Name: "{group}\List audio devices"; Filename: "{cmd}"; Parameters: "/k """"{app}\engine.exe"""" --list"
@@ -55,7 +56,7 @@ Filename: "{sys}\wscript.exe"; Parameters: """{app}\supervisor.vbs"""; WorkingDi
 Filename: "{app}\QUICKSTART.txt"; Description: "Open the quick start (VB-CABLE setup)"; Flags: postinstall shellexec skipifsilent
 
 [UninstallRun]
-; Stop the running engine + supervisor before files are removed.
+; Stop the running engine before files are removed.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\stop-engine.ps1"""; Flags: runhidden; RunOnceId: "StopEngine"
 
 [UninstallDelete]
