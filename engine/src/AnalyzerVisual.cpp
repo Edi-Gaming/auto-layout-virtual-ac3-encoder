@@ -7,6 +7,7 @@
 #include <cmath>
 #include <deque>
 #include <string>
+#include <vector>
 
 namespace {
 
