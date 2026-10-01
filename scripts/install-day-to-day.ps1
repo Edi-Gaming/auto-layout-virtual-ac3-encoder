@@ -178,7 +178,7 @@ if ($configText -notmatch '(?m)^\s*tray\s*=') {
 if ($configText -notmatch '(?m)^\s*stereo_processing\s*=') {
   Add-Content -Path $configDst -Encoding UTF8 -Value @(
     ''
-    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.8'
+    '# Stereo spatial policy: receiver = AC3 2.0 + AVR PLII/A.F.D.; music = OHL Music v0.9'
     'stereo_processing=receiver'
     'music_surround_gain=0.70'
     'music_width_floor=0.16'
