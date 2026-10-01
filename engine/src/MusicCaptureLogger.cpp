@@ -322,9 +322,9 @@ bool MusicCaptureLogger::Arm(int seconds)
     return false;
   }
 
-  activePath_ = captureDir.string();
   {
     std::lock_guard<std::mutex> lock(statusMutex_);
+    activePath_ = captureDir.string();
     lastError_.clear();
   }
   state_.store(State::Armed, std::memory_order_release);
@@ -354,7 +354,8 @@ void MusicCaptureLogger::PushPacket(const float* stereo,
                                     size_t frames,
                                     const MusicTelemetrySnapshot& telemetry)
 {
-  State state = state_.load(std::memory_order_relaxed);
+  // Acquire publishes the buffers, target length and active metadata prepared by Arm().
+  State state = state_.load(std::memory_order_acquire);
   if (state == State::Armed)
   {
     State expected = State::Armed;
