@@ -52,8 +52,12 @@ $legacyStartupLnk = Join-Path $startup 'Virtual AC3 Encoder.lnk'
 $ohlStartupLnk = Join-Path $startup 'OHL Virtual AC3 Encoder.lnk'
 
 $engineSrc = Join-Path $SourceDir 'engine.exe'
+$uiSrc = Join-Path $SourceDir 'OHL-Control.exe'
 if (-not (Test-Path $engineSrc)) {
   throw "engine.exe not found next to this script: $engineSrc"
+}
+if (-not (Test-Path $uiSrc)) {
+  throw "OHL-Control.exe not found next to this script: $uiSrc"
 }
 
 $startMenuDir = Join-Path $programsDir 'OHL Virtual AC3 Encoder'
@@ -142,6 +146,7 @@ foreach ($valueName in @('VirtualAc3Encoder', 'Virtual AC3 Encoder', 'OHL Virtua
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item $engineSrc $InstallDir -Force
+Copy-Item $uiSrc $InstallDir -Force
 Get-ChildItem -Path $SourceDir -Filter '*.dll' -File | Copy-Item -Destination $InstallDir -Force
 
 $configDst = Join-Path $InstallDir 'virtual-ac3-encoder.conf'
@@ -298,6 +303,7 @@ if ($didV08Migration) {
 }
 
 $exePath = Join-Path $InstallDir 'engine.exe'
+$uiPath = Join-Path $InstallDir 'OHL-Control.exe'
 $logPath = Join-Path $InstallDir 'engine.log'
 $launcherPath = Join-Path $InstallDir 'OHL-Autostart.vbs'
 
@@ -336,10 +342,11 @@ if (-not [string]::Equals($startupCheck.TargetPath, $wscriptPath, [System.String
 Write-Host "  startup target verified: $($startupCheck.TargetPath) $($startupCheck.Arguments)"
 
 $shortcut = $ws.CreateShortcut($shortcutPath)
-$shortcut.TargetPath = $exePath
-$shortcut.Arguments = '--switcher'
+$shortcut.TargetPath = $uiPath
+$shortcut.Arguments = ''
 $shortcut.WorkingDirectory = $InstallDir
 $shortcut.Description = 'OHL Virtual AC3 Encoder - Surround / Guitar mode switcher'
+$shortcut.IconLocation = $exePath + ',0'
 $shortcut.Save()
 
 # Manual recovery shortcut: safe to click whenever the engine was exited/closed.
@@ -352,6 +359,7 @@ $startShortcut.IconLocation = $exePath + ',0'
 $startShortcut.Save()
 
 Write-Host "Installed engine -> $InstallDir"
+Write-Host "No-console UI    -> $uiPath"
 Write-Host "Preserved config  -> $configDst"
 Write-Host "Tray control      -> enabled"
 Write-Host "Mode shortcut     -> $shortcutPath"
