@@ -87,6 +87,8 @@ add_executable(engine
   src/ModeControl.h
   src/ModernControls.cpp
   src/ModernControls.h
+  src/MacroKnob.cpp
+  src/MacroKnob.h
   src/AnalyzerVisual.cpp
   src/AnalyzerVisual.h
   src/StageVisual.cpp
@@ -124,6 +126,8 @@ add_executable(ohl_ui WIN32
   src/ModeControl.h
   src/ModernControls.cpp
   src/ModernControls.h
+  src/MacroKnob.cpp
+  src/MacroKnob.h
   src/AnalyzerVisual.cpp
   src/AnalyzerVisual.h
   src/StageVisual.cpp
