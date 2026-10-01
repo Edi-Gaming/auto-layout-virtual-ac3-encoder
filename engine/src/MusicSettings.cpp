@@ -27,6 +27,9 @@ enum ControlId
   kWidth,
   kSpectralIntelligence,
   kSpatialBinThreshold,
+  kPerBinRouting,
+  kDimension,
+  kCenterWidth,
   kFrontLock,
   kDiffuseThreshold,
   kRearBudget,
@@ -36,6 +39,9 @@ enum ControlId
   kAmbienceValue,
   kWidthValue,
   kSpectralIntelligenceValue,
+  kPerBinRoutingValue,
+  kDimensionValue,
+  kCenterWidthValue,
   kFrontLockValue,
   kRejectValue,
   kCenterValue,
@@ -49,6 +55,16 @@ enum ControlId
 
   kAmbienceAttack,
   kAmbienceRelease,
+  kSpectralAcquire,
+  kSpectralRelease,
+  kSteerLow,
+  kSteerBody,
+  kSteerPresence,
+  kSteerAir,
+  kLockLow,
+  kLockBody,
+  kLockPresence,
+  kLockAir,
   kDirectThreshold,
   kDirectRecovery,
 
@@ -69,6 +85,12 @@ enum ControlId
   kPresetWide,
   kPresetAmbient,
   kPresetV03,
+  kStoreA,
+  kRecallA,
+  kStoreB,
+  kRecallB,
+  kMeterSummary,
+  kMeterBands,
   kReload,
   kApply,
   kStatus
@@ -78,6 +100,10 @@ HBRUSH gBg = nullptr;
 HFONT gTitleFont = nullptr;
 HFONT gUiFont = nullptr;
 HFONT gSmallFont = nullptr;
+
+constexpr UINT_PTR kMetricsTimer = 17;
+bool gHaveSnapshotA = false;
+bool gHaveSnapshotB = false;
 
 struct SettingsState
 {
@@ -93,6 +119,19 @@ struct SettingsState
   double ambienceReleaseMs = 520.0;
   double spectralIntelligence = 0.90;
   double spatialBinThreshold = 0.30;
+  double perBinRouting = 0.55;
+  double spectralAcquireMs = 65.0;
+  double spectralReleaseMs = 520.0;
+  double dimension = 0.0;
+  double centerWidth = 1.0;
+  double steerLow = 0.18;
+  double steerBody = 0.55;
+  double steerPresence = 0.90;
+  double steerAir = 1.10;
+  double lockLow = 0.30;
+  double lockBody = 1.00;
+  double lockPresence = 0.82;
+  double lockAir = 0.25;
 
   double frontLock = 0.88;
   double diffuseThreshold = 0.10;
@@ -169,6 +208,19 @@ void LoadState(SettingsState& s)
       ReadDouble(v, "music_spectral_intelligence", s.spectralIntelligence);
   s.spatialBinThreshold =
       ReadDouble(v, "music_spatial_bin_threshold", s.spatialBinThreshold);
+  s.perBinRouting = ReadDouble(v, "music_per_bin_routing", s.perBinRouting);
+  s.spectralAcquireMs = ReadDouble(v, "music_spectral_acquire_ms", s.spectralAcquireMs);
+  s.spectralReleaseMs = ReadDouble(v, "music_spectral_release_ms", s.spectralReleaseMs);
+  s.dimension = ReadDouble(v, "music_dimension", s.dimension);
+  s.centerWidth = ReadDouble(v, "music_center_width", s.centerWidth);
+  s.steerLow = ReadDouble(v, "music_steering_low", s.steerLow);
+  s.steerBody = ReadDouble(v, "music_steering_body", s.steerBody);
+  s.steerPresence = ReadDouble(v, "music_steering_presence", s.steerPresence);
+  s.steerAir = ReadDouble(v, "music_steering_air", s.steerAir);
+  s.lockLow = ReadDouble(v, "music_front_lock_low", s.lockLow);
+  s.lockBody = ReadDouble(v, "music_front_lock_body", s.lockBody);
+  s.lockPresence = ReadDouble(v, "music_front_lock_presence", s.lockPresence);
+  s.lockAir = ReadDouble(v, "music_front_lock_air", s.lockAir);
 
   s.frontLock = ReadDouble(v, "music_front_lock", s.frontLock);
   s.diffuseThreshold = ReadDouble(v, "music_diffuse_threshold", s.diffuseThreshold);
