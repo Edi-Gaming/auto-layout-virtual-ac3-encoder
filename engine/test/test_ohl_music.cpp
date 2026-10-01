@@ -180,7 +180,7 @@ TEST_CASE("OHL Music opens diffuse ambience but keeps it subordinate to the fron
 }
 
 
-TEST_CASE("OHL Music direct-event rejection ducks a hard-panned clap without muting the rears")
+TEST_CASE("OHL Music v0.11.2 direct-event protection never chops the continuous width bed")
 {
   constexpr size_t frames = 512;
   std::vector<float> clap(frames * 2, 0.0f);
@@ -190,7 +190,7 @@ TEST_CASE("OHL Music direct-event rejection ducks a hard-panned clap without mut
   auto p = EqualDistanceParams();
   p.centerTrebleGain = 0.0f;
   p.widthFloor = 0.25f;
-  p.surroundGain = 0.0f;
+  p.surroundGain = 0.0f; // isolate the stable bed from the adaptive layer.
   p.rearBudget = 1.0f;
 
   OhlMusicUpmixer unprotected;
@@ -207,10 +207,9 @@ TEST_CASE("OHL Music direct-event rejection ducks a hard-panned clap without mut
 
   const double openPeak = ChannelPeak(openOut, 4);
   const double protectedPeak = ChannelPeak(protectedOut, 4);
-  MESSAGE("rear clap peak open=" << openPeak << " protected=" << protectedPeak);
+  MESSAGE("rear clap bed open=" << openPeak << " protected=" << protectedPeak);
   CHECK(openPeak > 0.02);
-  CHECK(protectedPeak < openPeak * 0.75);
-  CHECK(protectedPeak > openPeak * 0.25);
+  CHECK(std::fabs(protectedPeak - openPeak) < openPeak * 0.05);
 }
 
 
