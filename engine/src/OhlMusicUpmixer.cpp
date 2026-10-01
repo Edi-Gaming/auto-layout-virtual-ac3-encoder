@@ -266,7 +266,8 @@ bool OhlMusicUpmixer::Init(const Params& params)
   routerParams.directReject = params_.directReject;
   if (!spectralRouter_.Init(routerParams))
     return false;
-  processingLatencySamples_ = spectralRouter_.LatencySamples();
+  processingLatencySamples_ =
+      params_.perBinRouting > 1.0e-6f ? spectralRouter_.LatencySamples() : 0;
   broadRearDelayL_.Configure(processingLatencySamples_);
   broadRearDelayR_.Configure(processingLatencySamples_);
 
@@ -467,14 +468,21 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const float frontLockGain = static_cast<float>(
       1.0 - static_cast<double>(params_.frontLock) * frontLockConfidence);
 
+  const float perBinBlend = std::clamp(params_.perBinRouting, 0.0f, 1.0f);
   std::vector<float> spectralRearL(frames, 0.0f);
   std::vector<float> spectralRearR(frames, 0.0f);
-  spectralRouter_.Process(stereo, frames, spectralRearL.data(), spectralRearR.data());
-  const auto& routed = spectralRouter_.LastMetrics();
-  lastBandOwnership_ = routed.ownership;
-  lastBandCenter_ = routed.center;
-
-  const float perBinBlend = std::clamp(params_.perBinRouting, 0.0f, 1.0f);
+  if (perBinBlend > 1.0e-6f)
+  {
+    spectralRouter_.Process(stereo, frames, spectralRearL.data(), spectralRearR.data());
+    const auto& routed = spectralRouter_.LastMetrics();
+    lastBandOwnership_ = routed.ownership;
+    lastBandCenter_ = routed.center;
+  }
+  else
+  {
+    lastBandOwnership_ = {{0, 0, 0, 0}};
+    lastBandCenter_ = {{0, 0, 0, 0}};
+  }
   const float broadbandDimension =
       static_cast<float>(std::pow(2.0, 0.85 * static_cast<double>(params_.dimension)));
 
