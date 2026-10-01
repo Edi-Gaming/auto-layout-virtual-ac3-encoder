@@ -282,24 +282,62 @@ LRESULT CALLBACK AnalyzerProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       else
       {
         const auto& m = s->smooth;
-        const int meterX = 16;
-        const int meterW = r.right - 32;
-        DrawMeter(mem, font, L"Ambience", m.ambience, meterX, 40, meterW, kBlue);
-        DrawMeter(mem, font, L"Center", m.center, meterX, 62, meterW, kPurple);
-        DrawMeter(mem, font, L"Spatial", m.spatialBins, meterX, 84, meterW, kAmber);
-        DrawMeter(mem, font, L"Transient", m.transient, meterX, 106, meterW, kRose);
-        DrawMeter(mem, font, L"Rear open", m.rearOpen, meterX, 128, meterW, kGreen);
-        DrawMeter(mem, font, L"Front lock", m.frontLock, meterX, 150, meterW, kCyan);
+        const int clientW = static_cast<int>(r.right - r.left);
+        const int clientH = static_cast<int>(r.bottom - r.top);
 
         wchar_t budget[96] = {};
-        swprintf_s(budget, L"rear budget scale  %d%%",
-                   static_cast<int>(std::lround(Clamp01(m.budgetScale) * 100.0f)));
-        RECT br{16, 174, r.right - 16, 192};
-        Text(mem, font, m.budgetScale < 0.98f ? kAmber : kMuted, budget, br,
-             DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        swprintf_s(
+            budget,
+            L"rear budget scale  %d%%",
+            static_cast<int>(std::lround(Clamp01(m.budgetScale) * 100.0f)));
 
-        DrawBandBars(mem, font, m.ownership, m.bandCenter, 16, 198, meterW);
-        DrawHistory(mem, font, *s, 16, 282, meterW, std::max(70, static_cast<int>(r.bottom) - 296));
+        if (clientW >= 500)
+        {
+          // Wide layout used by the MIX page: two compact meter columns, then band ownership
+          // and a full-width history trace. This reads like an instrument panel instead of a
+          // vertical diagnostics dump.
+          const int gap = 18;
+          const int columnW = (clientW - 32 - gap) / 2;
+          const int leftX = 16;
+          const int rightX = leftX + columnW + gap;
+
+          DrawMeter(mem, font, L"Ambience", m.ambience, leftX, 42, columnW, kBlue);
+          DrawMeter(mem, font, L"Spatial", m.spatialBins, leftX, 68, columnW, kAmber);
+          DrawMeter(mem, font, L"Rear open", m.rearOpen, leftX, 94, columnW, kGreen);
+
+          DrawMeter(mem, font, L"Center", m.center, rightX, 42, columnW, kPurple);
+          DrawMeter(mem, font, L"Transient", m.transient, rightX, 68, columnW, kRose);
+          DrawMeter(mem, font, L"Front lock", m.frontLock, rightX, 94, columnW, kCyan);
+
+          RECT br{16, 121, r.right - 16, 140};
+          Text(mem, font, m.budgetScale < 0.98f ? kAmber : kMuted, budget, br,
+               DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+          DrawBandBars(mem, font, m.ownership, m.bandCenter, 16, 145, clientW - 32);
+          DrawHistory(
+              mem, font, *s,
+              16, 218, clientW - 32,
+              std::max(62, clientH - 232));
+        }
+        else
+        {
+          const int meterX = 16;
+          const int meterW = clientW - 32;
+          DrawMeter(mem, font, L"Ambience", m.ambience, meterX, 40, meterW, kBlue);
+          DrawMeter(mem, font, L"Center", m.center, meterX, 62, meterW, kPurple);
+          DrawMeter(mem, font, L"Spatial", m.spatialBins, meterX, 84, meterW, kAmber);
+          DrawMeter(mem, font, L"Transient", m.transient, meterX, 106, meterW, kRose);
+          DrawMeter(mem, font, L"Rear open", m.rearOpen, meterX, 128, meterW, kGreen);
+          DrawMeter(mem, font, L"Front lock", m.frontLock, meterX, 150, meterW, kCyan);
+
+          RECT br{16, 174, r.right - 16, 192};
+          Text(mem, font, m.budgetScale < 0.98f ? kAmber : kMuted, budget, br,
+               DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+          DrawBandBars(mem, font, m.ownership, m.bandCenter, 16, 198, meterW);
+          DrawHistory(mem, font, *s, 16, 282, meterW,
+                      std::max(70, clientH - 296));
+        }
       }
 
       BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
