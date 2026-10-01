@@ -857,8 +857,8 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  WS_CHILD | WS_VISIBLE,
                                  20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.10 spectral intelligence — per-bin spatial recognition on the clean M/S renderer.",
-            21, 48, 710, 21, true);
+      Label(hwnd, L"v0.11 adaptive matrix lab — true per-bin routing on the clean v0.10 front stage.",
+            21, 48, 1040, 21, true);
 
       HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
                                   WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
@@ -974,7 +974,76 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                   nullptr, nullptr);
       SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
+      // ---- v0.11 right-hand lab pane ---------------------------------------------------------
+      Group(hwnd, L"Live analyzer", 752, 108, 342, 220);
+      HWND meterSummary = CreateWindowW(
+          L"STATIC", L"Waiting for live metrics...",
+          WS_CHILD | WS_VISIBLE | SS_LEFT,
+          770, 137, 300, 82, hwnd,
+          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMeterSummary)), nullptr, nullptr);
+      SendMessageW(meterSummary, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+
+      HWND meterBands = CreateWindowW(
+          L"STATIC", L"OWN  --  --  --  --\r\nCTR  --  --  --  --",
+          WS_CHILD | WS_VISIBLE | SS_LEFT,
+          770, 226, 300, 78, hwnd,
+          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kMeterBands)), nullptr, nullptr);
+      SendMessageW(meterBands, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
+
+      Group(hwnd, L"Per-bin router / matrix", 752, 338, 342, 390);
+
+      Label(hwnd, L"Per-bin routing", 770, 367, 118, 22);
+      Slider(hwnd, kPerBinRouting, 888, 360, 132, 100, PercentToSlider(state->perBinRouting));
+      ValueLabel(hwnd, kPerBinRoutingValue, 1022, 367, 55);
+
+      Label(hwnd, L"Dimension", 770, 407, 118, 22);
+      Slider(hwnd, kDimension, 888, 400, 132, 200,
+             static_cast<int>(std::lround((state->dimension + 1.0) * 100.0)));
+      ValueLabel(hwnd, kDimensionValue, 1022, 407, 55);
+
+      Label(hwnd, L"Center Width", 770, 447, 118, 22);
+      Slider(hwnd, kCenterWidth, 888, 440, 132, 100, PercentToSlider(state->centerWidth));
+      ValueLabel(hwnd, kCenterWidthValue, 1022, 447, 55);
+
+      Label(hwnd, L"Ownership acquire", 770, 489, 118, 22, true);
+      Edit(hwnd, kSpectralAcquire, 888, 485, 58);
+      Label(hwnd, L"ms", 949, 489, 24, 22, true);
+      Label(hwnd, L"release", 984, 489, 52, 22, true);
+      Edit(hwnd, kSpectralRelease, 1035, 485, 45);
+
+      Label(hwnd, L"Band", 770, 530, 46, 20, true);
+      Label(hwnd, L"LOW", 826, 530, 46, 20, true);
+      Label(hwnd, L"BODY", 884, 530, 48, 20, true);
+      Label(hwnd, L"PRES", 944, 530, 48, 20, true);
+      Label(hwnd, L"AIR", 1004, 530, 46, 20, true);
+
+      Label(hwnd, L"Steer", 770, 557, 46, 22, true);
+      Edit(hwnd, kSteerLow, 820, 553, 48);
+      Edit(hwnd, kSteerBody, 880, 553, 48);
+      Edit(hwnd, kSteerPresence, 940, 553, 48);
+      Edit(hwnd, kSteerAir, 1000, 553, 48);
+
+      Label(hwnd, L"F-lock", 770, 593, 46, 22, true);
+      Edit(hwnd, kLockLow, 820, 589, 48);
+      Edit(hwnd, kLockBody, 880, 589, 48);
+      Edit(hwnd, kLockPresence, 940, 589, 48);
+      Edit(hwnd, kLockAir, 1000, 589, 48);
+
+      Label(hwnd, L"Low <250 Hz  |  Body 250-2k  |  Presence 2-6k  |  Air >6k",
+            770, 628, 305, 38, true);
+      Label(hwnd, L"Dimension: -100 front / +100 rear. Center Width: 100 = v0.10 phantom center.",
+            770, 674, 300, 40, true);
+
+      Group(hwnd, L"A / B audition", 752, 740, 342, 112);
+      Button(hwnd, kStoreA, L"STORE A", 770, 772, 72, 30);
+      Button(hwnd, kRecallA, L"A  ▶", 848, 772, 58, 30);
+      Button(hwnd, kStoreB, L"STORE B", 922, 772, 72, 30);
+      Button(hwnd, kRecallB, L"B  ▶", 1000, 772, 58, 30);
+      Label(hwnd, L"Recall immediately saves + applies that snapshot live.", 770, 811, 300, 24, true);
+
       PushStateToControls(hwnd, *state);
+      SetTimer(hwnd, kMetricsTimer, 300, nullptr);
+      RefreshMetrics(hwnd);
       return 0;
     }
 
@@ -1068,7 +1137,7 @@ int RunMusicSettingsGui(const std::string& configPath)
   HWND hwnd = CreateWindowExW(
       0, kClassName, L"OHL Music Spatial Lab",
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-      CW_USEDEFAULT, CW_USEDEFAULT, 770, 965,
+      CW_USEDEFAULT, CW_USEDEFAULT, 1120, 965,
       nullptr, nullptr, instance, &state);
 
   if (!hwnd)
