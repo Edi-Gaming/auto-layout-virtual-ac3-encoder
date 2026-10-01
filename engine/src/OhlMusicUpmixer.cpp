@@ -372,7 +372,8 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
   const double rmsR = std::sqrt(full.eR);
   const double sum = rmsL + rmsR;
   const double balance = sum > kEps ? 2.0 * std::min(rmsL, rmsR) / sum : 1.0;
-  const double pan = sum > kEps ? std::clamp((rmsL - rmsR) / sum, -1.0, 1.0) : 0.0;
+  const double leftShare = sum > kEps ? rmsL / sum : 0.5;
+  const double rightShare = sum > kEps ? rmsR / sum : 0.5;
   const float centerConfidence =
       static_cast<float>(std::clamp((fullCorr - 0.35) / 0.65, 0.0, 1.0) * balance);
   const bool blockNearlyMono = fullCorr > 0.9995 && balance > 0.995;
@@ -431,8 +432,10 @@ void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* o
         0.75f * surroundAmount_ * diffuseLockGain;
 
     // Preserve left/right recording asymmetry using packet-level energy, not sample chopping.
-    const float leftBias = static_cast<float>(0.55 + 0.45 * pan);
-    const float rightBias = static_cast<float>(0.55 - 0.45 * pan);
+    const float leftBias = static_cast<float>(
+        0.10 + 0.90 * std::clamp(2.0 * leftShare, 0.0, 1.0));
+    const float rightBias = static_cast<float>(
+        0.10 + 0.90 * std::clamp(2.0 * rightShare, 0.0, 1.0));
 
     // Direct-event protection ducks attacks but cannot collapse the rear bed.
     const float effectiveReject = 0.45f * params_.directReject;
