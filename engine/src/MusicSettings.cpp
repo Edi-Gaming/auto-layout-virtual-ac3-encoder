@@ -991,7 +991,10 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
       if (!state) return -1;
 
-      gTitleFont = CreateFontW(-27, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+      gMixControls.clear();
+      gLabControls.clear();
+
+      gTitleFont = CreateFontW(-29, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
       gUiFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -1001,141 +1004,205 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
-      HWND title = CreateWindowW(L"STATIC", L"OHL  |  MUSIC SPATIAL LAB",
-                                 WS_CHILD | WS_VISIBLE,
-                                 20, 14, 700, 34, hwnd, nullptr, nullptr, nullptr);
+      const auto mix = [&](HWND control) -> HWND {
+        if (control) gMixControls.push_back(control);
+        return control;
+      };
+      const auto lab = [&](HWND control) -> HWND {
+        if (control) gLabControls.push_back(control);
+        return control;
+      };
+
+      HWND title = CreateWindowW(
+          L"STATIC", L"OHL  |  MUSIC SPATIAL LAB",
+          WS_CHILD | WS_VISIBLE,
+          20, 13, 720, 36, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(title, WM_SETFONT, reinterpret_cast<WPARAM>(gTitleFont), TRUE);
-      Label(hwnd, L"v0.11.2 spatial scene lab \u2014 smoother transients, subtle-cue rescue, visual speaker stage.",
-            21, 48, 1040, 21, true);
 
-      HWND enable = CreateWindowW(L"BUTTON", L"Enable OHL Music for stereo",
-                                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-                                  20, 76, 245, 25, hwnd,
-                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEnable)),
-                                  nullptr, nullptr);
-      SendMessageW(enable, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+      Label(
+          hwnd,
+          L"v0.11.3 scene console  \u2014  hardware-good v0.11.2 DSP, rebuilt around listening.",
+          21, 49, 810, 21, true);
 
-      Label(hwnd, L"Quick starts:", 300, 79, 78, 22, true);
-      Button(hwnd, kPresetNatural, L"NATURAL", 378, 73, 83);
-      Button(hwnd, kPresetWide, L"WIDE", 467, 73, 72);
-      Button(hwnd, kPresetAmbient, L"AMBIENT", 545, 73, 88);
-      Button(hwnd, kPresetV03, L"BASE", 639, 73, 64);
+      HWND enable = Button(hwnd, kEnable, L"OHL MUSIC", 20, 76, 125, 32);
+      SendMessageW(enable, BM_SETCHECK, state->enabled ? BST_CHECKED : BST_UNCHECKED, 0);
+      Label(hwnd, L"stereo spatial engine", 158, 82, 165, 22, true);
 
-      Group(hwnd, L"Spatial field", 14, 108, 722, 282);
-      Label(hwnd, L"Adaptive ambience", 30, 136, 150, 22);
-      Slider(hwnd, kAmbience, 180, 129, 445, 120, PercentToSlider(state->ambience));
-      ValueLabel(hwnd, kAmbienceValue, 642, 136);
+      Button(hwnd, kViewMix, L"MIX", 980, 72, 76, 34);
+      Button(hwnd, kViewLab, L"LAB", 1064, 72, 76, 34);
 
-      Label(hwnd, L"Base side width", 30, 174, 150, 22);
-      Slider(hwnd, kWidth, 180, 167, 445, 60, PercentToSlider(state->width));
-      ValueLabel(hwnd, kWidthValue, 642, 174);
-
-      Label(hwnd, L"Band emphasis", 30, 217, 105, 22, true);
-      Label(hwnd, L"LOW", 142, 217, 35, 22, true);
-      Edit(hwnd, kLowWeight, 178, 213, 58);
-      Label(hwnd, L"MID", 258, 217, 35, 22, true);
-      Edit(hwnd, kMidWeight, 294, 213, 58);
-      Label(hwnd, L"HIGH", 375, 217, 40, 22, true);
-      Edit(hwnd, kHighWeight, 417, 213, 58);
-      Label(hwnd, L"weight", 484, 217, 55, 22, true);
-
-      Label(hwnd, L"Spectral intelligence", 30, 258, 150, 22);
-      Slider(hwnd, kSpectralIntelligence, 180, 251, 335, 100,
-             PercentToSlider(state->spectralIntelligence));
-      ValueLabel(hwnd, kSpectralIntelligenceValue, 520, 258, 60);
-      Label(hwnd, L"Selectivity", 588, 258, 75, 22, true);
-      Edit(hwnd, kSpatialBinThreshold, 664, 254, 50);
-
-      Label(hwnd, L"Response", 30, 305, 70, 22);
-      Label(hwnd, L"attack", 108, 305, 44, 22, true);
-      Edit(hwnd, kAmbienceAttack, 153, 301, 65);
-      Label(hwnd, L"ms", 221, 305, 25, 22, true);
-      Label(hwnd, L"release", 268, 305, 50, 22, true);
-      Edit(hwnd, kAmbienceRelease, 320, 301, 68);
-      Label(hwnd, L"ms", 391, 305, 25, 22, true);
-      Label(hwnd, L"FFT scene recognition + soft ownership now catches subtle spatial cues.",
-            30, 346, 650, 22, true);
-
-      Group(hwnd, L"Front anchoring / transient protection", 14, 400, 722, 176);
-      Label(hwnd, L"Front / vocal lock", 30, 429, 150, 22);
-      Slider(hwnd, kFrontLock, 180, 422, 445, 100, PercentToSlider(state->frontLock));
-      ValueLabel(hwnd, kFrontLockValue, 642, 429);
-
-      Label(hwnd, L"Diffuse gate", 30, 472, 82, 22);
-      Edit(hwnd, kDiffuseThreshold, 114, 468, 58);
-      Label(hwnd, L"Rear budget", 206, 472, 78, 22);
-      Edit(hwnd, kRearBudget, 286, 468, 58);
-      Label(hwnd, L"Transient protect", 377, 472, 110, 22);
-      Edit(hwnd, kReject, 490, 468, 58);
-
-      Label(hwnd, L"Event sensitivity", 30, 516, 105, 22);
-      Edit(hwnd, kDirectThreshold, 137, 512, 65);
-      Label(hwnd, L"Recovery", 236, 516, 62, 22);
-      Edit(hwnd, kDirectRecovery, 300, 512, 65);
-      Label(hwnd, L"ms", 368, 516, 25, 22, true);
-      Label(hwnd, L"Fast hats keep the continuous bed; only the adaptive event layer ducks.",
-            410, 512, 290, 38, true);
-
-      Group(hwnd, L"Matrix / speaker behavior", 14, 586, 722, 178);
-      Label(hwnd, L"Per-bin mix", 30, 616, 80, 22);
-      Edit(hwnd, kPerBinRouting, 112, 612, 58);
-      Label(hwnd, L"Dimension", 205, 616, 75, 22);
-      Edit(hwnd, kDimension, 282, 612, 58);
-      Label(hwnd, L"Center width", 375, 616, 88, 22);
-      Edit(hwnd, kCenterWidth, 465, 612, 58);
-      Label(hwnd, L"(-1 front / +1 rear)", 535, 616, 145, 22, true);
-
-      Label(hwnd, L"Center sparkle", 30, 656, 100, 22);
-      Edit(hwnd, kCenter, 132, 652, 58);
-      Label(hwnd, L"Center band", 216, 656, 82, 22);
-      Edit(hwnd, kCenterHp, 300, 652, 68);
-      Label(hwnd, L"\u2014", 372, 656, 15, 22);
-      Edit(hwnd, kCenterLp, 390, 652, 72);
-      Label(hwnd, L"Rear band", 490, 656, 70, 22);
-      Edit(hwnd, kRearHp, 562, 652, 60);
-      Label(hwnd, L"\u2014", 626, 656, 15, 22);
-      Edit(hwnd, kRearLp, 644, 652, 66);
-
-      Label(hwnd, L"SL trim", 30, 699, 52, 22);
-      Edit(hwnd, kRearLeftTrim, 84, 695, 62);
-      Label(hwnd, L"SR trim", 178, 699, 52, 22);
-      Edit(hwnd, kRearRightTrim, 232, 695, 62);
-      Label(hwnd, L"Band steering / ownership timing follows the selected preset or saved config.",
-            320, 695, 380, 38, true);
-
-      Group(hwnd, L"Geometry / time alignment", 14, 774, 722, 76);
-      Label(hwnd, L"FL", 30, 802, 24, 22); Edit(hwnd, kFl, 54, 798, 58);
-      Label(hwnd, L"C", 133, 802, 18, 22); Edit(hwnd, kC, 151, 798, 58);
-      Label(hwnd, L"FR", 229, 802, 24, 22); Edit(hwnd, kFr, 253, 798, 58);
-      Label(hwnd, L"SL", 331, 802, 24, 22); Edit(hwnd, kSl, 355, 798, 58);
-      Label(hwnd, L"SR", 433, 802, 24, 22); Edit(hwnd, kSr, 457, 798, 58);
-      Label(hwnd, L"inches from listening position", 530, 802, 175, 22, true);
-
-      HWND apply = Button(hwnd, kApply, L"APPLY LIVE", 20, 868, 150, 42);
-      SendMessageW(apply, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-      Button(hwnd, kReload, L"RELOAD SAVED", 180, 868, 145, 42);
-
-      HWND status = CreateWindowW(L"STATIC", L"Presets are non-destructive until Apply Live.",
-                                  WS_CHILD | WS_VISIBLE,
-                                  344, 878, 380, 30, hwnd,
-                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatus)),
-                                  nullptr, nullptr);
-      SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
-
-      HWND stage = CreateOhlStageVisual(hwnd, kStageViz, 752, 108, 342, 300);
+      // The stage is the common visual anchor in both views.
+      HWND stage = CreateOhlStageVisual(hwnd, kStageViz, 540, 110, 610, 355);
       SendMessageW(stage, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
 
-      HWND analyzer = CreateOhlAnalyzerVisual(hwnd, kAnalyzerViz, 752, 420, 342, 360);
+      // ---------------------------------------------------------------------------------------
+      // MIX: four ear-facing macros, presets/A-B, stage, analyzer.
+      // ---------------------------------------------------------------------------------------
+      mix(Knob(
+          hwnd, kAmbience,
+          L"AMBIENCE\nHow much room and diffuse energy can bloom behind you.",
+          20, 110, 245, 230, 120, PercentToSlider(state->ambience),
+          RGB(88, 181, 255)));
+      mix(Knob(
+          hwnd, kWidth,
+          L"WIDTH\nThe quiet continuous side bed that keeps the stage breathing.",
+          275, 110, 245, 230, 60, PercentToSlider(state->width),
+          RGB(86, 214, 154)));
+      mix(Knob(
+          hwnd, kSpectralIntelligence,
+          L"INTELLIGENCE\nHow strongly FFT scene recognition drives spatial decisions.",
+          20, 350, 245, 230, 100, PercentToSlider(state->spectralIntelligence),
+          RGB(241, 187, 84)));
+      mix(Knob(
+          hwnd, kFrontLock,
+          L"FRONT LOCK\nHow hard vocals and direct material stay anchored up front.",
+          275, 350, 245, 230, 100, PercentToSlider(state->frontLock),
+          RGB(173, 126, 255)));
+
+      mix(Group(hwnd, L"Quick starts / ear A-B", 20, 590, 500, 190));
+      mix(Label(hwnd, L"PRESETS", 36, 620, 72, 20, true));
+      mix(Button(hwnd, kPresetNatural, L"NATURAL", 112, 614, 86, 32));
+      mix(Button(hwnd, kPresetWide, L"WIDE", 205, 614, 70, 32));
+      mix(Button(hwnd, kPresetAmbient, L"AMBIENT", 282, 614, 90, 32));
+      mix(Button(hwnd, kPresetV03, L"BASE", 379, 614, 72, 32));
+
+      mix(Label(hwnd, L"COMPARE", 36, 671, 72, 20, true));
+      mix(Button(hwnd, kStoreA, L"STORE A", 112, 665, 86, 32));
+      mix(Button(hwnd, kRecallA, L"A  \u25B6", 205, 665, 70, 32));
+      mix(Button(hwnd, kStoreB, L"STORE B", 282, 665, 90, 32));
+      mix(Button(hwnd, kRecallB, L"B  \u25B6", 379, 665, 72, 32));
+      mix(Label(
+          hwnd,
+          L"Presets load controls; A/B recall applies immediately so the same passage can be compared by ear.",
+          36, 718, 445, 42, true));
+
+      HWND analyzer = mix(CreateOhlAnalyzerVisual(hwnd, kAnalyzerViz, 540, 477, 610, 303));
       SendMessageW(analyzer, WM_SETFONT, reinterpret_cast<WPARAM>(gSmallFont), TRUE);
 
-      Group(hwnd, L"A / B audition", 752, 792, 342, 98);
-      Button(hwnd, kStoreA, L"STORE A", 770, 822, 72, 30);
-      Button(hwnd, kRecallA, L"A  \u25B6", 848, 822, 58, 30);
-      Button(hwnd, kStoreB, L"STORE B", 922, 822, 72, 30);
-      Button(hwnd, kRecallB, L"B  \u25B6", 1000, 822, 58, 30);
-      Label(hwnd, L"Recall applies immediately for ear A/B.", 770, 856, 300, 18, true);
+      // ---------------------------------------------------------------------------------------
+      // LAB: every engineering control remains available, but it no longer owns the default UI.
+      // ---------------------------------------------------------------------------------------
+      lab(Group(hwnd, L"Scene recognition", 20, 110, 500, 245));
+      lab(Label(hwnd, L"Band emphasis", 38, 142, 105, 22));
+      lab(Label(hwnd, L"LOW", 153, 142, 35, 22, true));
+      lab(Edit(hwnd, kLowWeight, 188, 138, 60));
+      lab(Label(hwnd, L"MID", 269, 142, 35, 22, true));
+      lab(Edit(hwnd, kMidWeight, 304, 138, 60));
+      lab(Label(hwnd, L"HIGH", 385, 142, 40, 22, true));
+      lab(Edit(hwnd, kHighWeight, 426, 138, 60));
+
+      lab(Label(hwnd, L"Spatial selectivity", 38, 184, 120, 22));
+      lab(Edit(hwnd, kSpatialBinThreshold, 161, 180, 66));
+      lab(Label(hwnd, L"broad attack", 255, 184, 86, 22, true));
+      lab(Edit(hwnd, kAmbienceAttack, 343, 180, 62));
+      lab(Label(hwnd, L"release", 412, 184, 48, 22, true));
+      lab(Edit(hwnd, kAmbienceRelease, 462, 180, 48));
+
+      lab(Label(hwnd, L"Ownership attack", 38, 226, 118, 22));
+      lab(Edit(hwnd, kSpectralAcquire, 161, 222, 66));
+      lab(Label(hwnd, L"release", 255, 226, 52, 22, true));
+      lab(Edit(hwnd, kSpectralRelease, 309, 222, 66));
+      lab(Label(hwnd, L"ms", 380, 226, 28, 22, true));
+
+      lab(Label(
+          hwnd,
+          L"Hard ownership is selective; soft ownership rescues subtle presence/air without promoting the whole mix.",
+          38, 272, 444, 55, true));
+
+      lab(Group(hwnd, L"Transient / matrix behavior", 20, 365, 500, 415));
+      lab(Label(hwnd, L"Diffuse gate", 38, 398, 85, 22));
+      lab(Edit(hwnd, kDiffuseThreshold, 126, 394, 66));
+      lab(Label(hwnd, L"Rear budget", 222, 398, 82, 22));
+      lab(Edit(hwnd, kRearBudget, 307, 394, 66));
+      lab(Label(hwnd, L"Transient protect", 38, 440, 120, 22));
+      lab(Edit(hwnd, kReject, 161, 436, 66));
+
+      lab(Label(hwnd, L"Event sensitivity", 255, 440, 105, 22));
+      lab(Edit(hwnd, kDirectThreshold, 362, 436, 66));
+      lab(Label(hwnd, L"Recovery", 38, 482, 70, 22));
+      lab(Edit(hwnd, kDirectRecovery, 111, 478, 66));
+      lab(Label(hwnd, L"ms", 181, 482, 28, 22, true));
+
+      lab(Label(hwnd, L"Per-bin mix", 255, 482, 82, 22));
+      lab(Edit(hwnd, kPerBinRouting, 340, 478, 66));
+      lab(Label(hwnd, L"Dimension", 38, 524, 75, 22));
+      lab(Edit(hwnd, kDimension, 116, 520, 66));
+      lab(Label(hwnd, L"Center width", 222, 524, 92, 22));
+      lab(Edit(hwnd, kCenterWidth, 317, 520, 66));
+
+      lab(Label(hwnd, L"Center sparkle", 38, 568, 105, 22));
+      lab(Edit(hwnd, kCenter, 146, 564, 66));
+      lab(Label(hwnd, L"Center HP", 255, 568, 75, 22));
+      lab(Edit(hwnd, kCenterHp, 333, 564, 72));
+      lab(Label(hwnd, L"LP", 413, 568, 26, 22, true));
+      lab(Edit(hwnd, kCenterLp, 441, 564, 69));
+
+      lab(Label(hwnd, L"Rear HP", 38, 610, 65, 22));
+      lab(Edit(hwnd, kRearHp, 106, 606, 70));
+      lab(Label(hwnd, L"Rear LP", 222, 610, 65, 22));
+      lab(Edit(hwnd, kRearLp, 290, 606, 80));
+      lab(Label(hwnd, L"SL trim", 38, 652, 62, 22));
+      lab(Edit(hwnd, kRearLeftTrim, 103, 648, 66));
+      lab(Label(hwnd, L"SR trim", 222, 652, 62, 22));
+      lab(Edit(hwnd, kRearRightTrim, 287, 648, 66));
+
+      lab(Label(
+          hwnd,
+          L"High-frequency transients now spare the stable width bed; direct-event protection acts on the adaptive layer.",
+          38, 700, 444, 52, true));
+
+      lab(Group(hwnd, L"Per-band steering / geometry", 540, 477, 610, 303));
+      lab(Label(hwnd, L"Band", 562, 511, 50, 22, true));
+      lab(Label(hwnd, L"LOW", 633, 511, 50, 22, true));
+      lab(Label(hwnd, L"BODY", 721, 511, 55, 22, true));
+      lab(Label(hwnd, L"PRES", 814, 511, 55, 22, true));
+      lab(Label(hwnd, L"AIR", 909, 511, 50, 22, true));
+
+      lab(Label(hwnd, L"Steer", 562, 547, 58, 22));
+      lab(Edit(hwnd, kSteerLow, 628, 543, 62));
+      lab(Edit(hwnd, kSteerBody, 716, 543, 62));
+      lab(Edit(hwnd, kSteerPresence, 809, 543, 62));
+      lab(Edit(hwnd, kSteerAir, 904, 543, 62));
+
+      lab(Label(hwnd, L"Front lock", 562, 588, 70, 22));
+      lab(Edit(hwnd, kLockLow, 628, 584, 62));
+      lab(Edit(hwnd, kLockBody, 716, 584, 62));
+      lab(Edit(hwnd, kLockPresence, 809, 584, 62));
+      lab(Edit(hwnd, kLockAir, 904, 584, 62));
+
+      lab(Label(hwnd, L"Geometry", 562, 638, 70, 22));
+      lab(Label(hwnd, L"FL", 635, 638, 22, 22, true));
+      lab(Edit(hwnd, kFl, 658, 634, 62));
+      lab(Label(hwnd, L"C", 731, 638, 18, 22, true));
+      lab(Edit(hwnd, kC, 750, 634, 62));
+      lab(Label(hwnd, L"FR", 823, 638, 24, 22, true));
+      lab(Edit(hwnd, kFr, 848, 634, 62));
+      lab(Label(hwnd, L"SL", 921, 638, 24, 22, true));
+      lab(Edit(hwnd, kSl, 946, 634, 62));
+      lab(Label(hwnd, L"SR", 1019, 638, 24, 22, true));
+      lab(Edit(hwnd, kSr, 1044, 634, 62));
+
+      lab(Label(
+          hwnd,
+          L"Distances are mirrored in the stage above. You can also drag any speaker there; edits stay unapplied until APPLY LIVE.",
+          562, 690, 552, 56, true));
+
+      // Always-visible transport / status strip.
+      HWND apply = Button(hwnd, kApply, L"APPLY LIVE", 20, 804, 156, 42);
+      SendMessageW(apply, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+      Button(hwnd, kReload, L"RELOAD SAVED", 184, 804, 145, 42);
+
+      HWND status = CreateWindowW(
+          L"STATIC",
+          L"MIX view \u2014 tune by ear; LAB holds the engineering controls.",
+          WS_CHILD | WS_VISIBLE,
+          350, 815, 790, 28, hwnd,
+          reinterpret_cast<HMENU>(static_cast<INT_PTR>(kStatus)),
+          nullptr, nullptr);
+      SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
       PushStateToControls(hwnd, *state);
+      SetUiPage(hwnd, true);
       StartMetricsWorker(hwnd);
       return 0;
     }
