@@ -1,5 +1,6 @@
 #include "ModeControl.h"
 #include "MusicSettings.h"
+#include "SurroundWizard.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -56,6 +57,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
   if (HasArg(argc, argv, L"--music-settings"))
   {
     rc = RunMusicSettingsGui(ExeDirUtf8() + "\\virtual-ac3-encoder.conf");
+  }
+  else if (HasArg(argc, argv, L"--surround-wizard"))
+  {
+    rc = RunSurroundWizardGui();
   }
   else
   {
