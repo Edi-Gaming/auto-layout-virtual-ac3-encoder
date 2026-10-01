@@ -341,6 +341,9 @@ void OhlMusicUpmixer::Reset()
   eventFast_.Reset();
   eventSlow_.Reset();
   spatialAnalyzer_.Reset();
+  spectralRouter_.Reset();
+  broadRearDelayL_.Reset();
+  broadRearDelayR_.Reset();
 
   gainInitialized_ = false;
   surroundAmount_ = 0.0f;
@@ -350,6 +353,9 @@ void OhlMusicUpmixer::Reset()
   lastSpatialBinFraction_ = 0.0f;
   lastSpectralCenter_ = 0.0f;
   lastSpectralTransient_ = 0.0f;
+  lastBandOwnership_ = {{0, 0, 0, 0}};
+  lastBandCenter_ = {{0, 0, 0, 0}};
+  lastRearBudgetScale_ = 1.0f;
 }
 
 void OhlMusicUpmixer::ProcessStereo(const float* stereo, size_t frames, float* out51)
