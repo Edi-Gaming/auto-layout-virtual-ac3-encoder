@@ -196,7 +196,18 @@ void OhlSpectralRouter::ProcessFrame()
     const double pR = std::norm(r[k]);
     const double energy = pL + pR;
     if (energy <= 1.0e-14)
+    {
+      // Silence is evidence that this bin is no longer spatial. Do not freeze ownership across
+      // gaps; release it with the same hysteresis time constant used for weak/non-spatial content.
+      ownership_[k] += releaseAlpha * (0.0f - ownership_[k]);
+      if (ownership_[k] < 1.0e-5f) ownership_[k] = 0.0f;
+      smoothPL_[k] *= 0.80;
+      smoothPR_[k] *= 0.80;
+      smoothCross_[k] *= 0.80;
+      prevMagL_[k] = 0.0f;
+      prevMagR_[k] = 0.0f;
       continue;
+    }
 
     const double magL = std::sqrt(pL);
     const double magR = std::sqrt(pR);
