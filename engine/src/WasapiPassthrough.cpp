@@ -166,6 +166,16 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
       op.diffuseThreshold = static_cast<float>(params_.musicDiffuseThreshold);
       op.spectralIntelligence = static_cast<float>(params_.musicSpectralIntelligence);
       op.spatialBinThreshold = static_cast<float>(params_.musicSpatialBinThreshold);
+      op.perBinRouting = static_cast<float>(params_.musicPerBinRouting);
+      op.spectralAcquireMs = static_cast<float>(params_.musicSpectralAcquireMs);
+      op.spectralReleaseMs = static_cast<float>(params_.musicSpectralReleaseMs);
+      op.dimension = static_cast<float>(params_.musicDimension);
+      op.centerWidth = static_cast<float>(params_.musicCenterWidth);
+      for (size_t i = 0; i < op.spectralSteering.size(); ++i)
+      {
+        op.spectralSteering[i] = static_cast<float>(params_.musicSpectralSteering[i]);
+        op.spectralFrontLock[i] = static_cast<float>(params_.musicSpectralFrontLock[i]);
+      }
       op.frontLock = static_cast<float>(params_.musicFrontLock);
       op.rearBudget = static_cast<float>(params_.musicRearBudget);
       op.directReject = static_cast<float>(params_.musicDirectReject);
@@ -598,6 +608,26 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
         ExtractFrontStereoFloat(in, musicStereo_.data());
         musicUpmixer_.ProcessStereo(
             musicStereo_.data(), static_cast<size_t>(framesPerPacket_), music51_.data());
+
+        if (params_.musicTelemetry)
+        {
+          params_.musicTelemetry->ambience.store(musicUpmixer_.LastSpectralAmbience());
+          params_.musicTelemetry->center.store(musicUpmixer_.LastSpectralCenter());
+          params_.musicTelemetry->spatialBins.store(musicUpmixer_.LastSpatialBinFraction());
+          params_.musicTelemetry->transient.store(musicUpmixer_.LastSpectralTransient());
+          params_.musicTelemetry->surroundAmount.store(musicUpmixer_.LastSurroundAmount());
+          params_.musicTelemetry->frontLock.store(musicUpmixer_.LastFrontLockConfidence());
+          params_.musicTelemetry->rearBudgetScale.store(musicUpmixer_.LastRearBudgetScale());
+
+          const auto& own = musicUpmixer_.LastBandOwnership();
+          const auto& ctr = musicUpmixer_.LastBandCenter();
+          for (size_t i = 0; i < own.size(); ++i)
+          {
+            params_.musicTelemetry->bandOwnership[i].store(own[i]);
+            params_.musicTelemetry->bandCenter[i].store(ctr[i]);
+          }
+        }
+
         encodeIn = reinterpret_cast<const uint8_t*>(music51_.data());
         enc = &encMusic51_;
         break;
