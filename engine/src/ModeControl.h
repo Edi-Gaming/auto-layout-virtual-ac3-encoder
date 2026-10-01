@@ -5,6 +5,8 @@
 #include <string>
 #include <thread>
 
+#include "MusicTelemetry.h"
+
 enum class RuntimeAudioMode
 {
   Surround = 0,
@@ -17,7 +19,7 @@ enum class RuntimeAudioMode
 const char* RuntimeAudioModeName(RuntimeAudioMode mode);
 
 // Sends one command to the already-running engine control pipe.
-// Commands: "surround", "guitar", "status", "reload".
+// Commands: "surround", "guitar", "status", "reload", "metrics".
 bool SendModeCommand(const std::string& command, std::string& response, unsigned timeoutMs = 2000);
 
 class ModeControlServer
@@ -30,7 +32,8 @@ public:
              std::atomic<RuntimeAudioMode>* current,
              std::string* lastError,
              std::mutex* errorMutex,
-             std::atomic_bool* reloadConfig);
+             std::atomic_bool* reloadConfig,
+             MusicTelemetry* musicTelemetry);
   void Stop();
 
 private:
@@ -41,6 +44,7 @@ private:
   std::string* lastError_ = nullptr;
   std::mutex* errorMutex_ = nullptr;
   std::atomic_bool* reloadConfig_ = nullptr;
+  MusicTelemetry* musicTelemetry_ = nullptr;
 
   std::atomic_bool stop_{false};
   std::thread thread_;
