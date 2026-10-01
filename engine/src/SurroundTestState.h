@@ -15,7 +15,9 @@ enum class SurroundTestRoute : int
   LFE,
   SL,
   SR,
-  FL_LFE
+  FL_LFE,
+  FL_LFE_M10,
+  FL_LFE_INV
 };
 
 inline const char* SurroundTestRouteName(SurroundTestRoute route)
@@ -28,8 +30,10 @@ inline const char* SurroundTestRouteName(SurroundTestRoute route)
     case SurroundTestRoute::LFE:    return "lfe";
     case SurroundTestRoute::SL:     return "sl";
     case SurroundTestRoute::SR:     return "sr";
-    case SurroundTestRoute::FL_LFE: return "fl+lfe";
-    case SurroundTestRoute::Off:    return "off";
+    case SurroundTestRoute::FL_LFE:     return "fl+lfe";
+    case SurroundTestRoute::FL_LFE_M10: return "fl+lfe-10";
+    case SurroundTestRoute::FL_LFE_INV: return "fl+lfe-inv";
+    case SurroundTestRoute::Off:        return "off";
   }
   return "off";
 }
@@ -43,6 +47,8 @@ inline bool ParseSurroundTestRoute(const std::string& text, SurroundTestRoute& r
   else if (text == "sl") route = SurroundTestRoute::SL;
   else if (text == "sr") route = SurroundTestRoute::SR;
   else if (text == "fl+lfe" || text == "front+lfe") route = SurroundTestRoute::FL_LFE;
+  else if (text == "fl+lfe-10" || text == "front+lfe-10") route = SurroundTestRoute::FL_LFE_M10;
+  else if (text == "fl+lfe-inv" || text == "front+lfe-inv") route = SurroundTestRoute::FL_LFE_INV;
   else return false;
   return true;
 }
