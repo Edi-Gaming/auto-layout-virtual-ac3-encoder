@@ -22,6 +22,21 @@ constexpr UINT kMenuLog = 2004;
 constexpr UINT kMenuExit = 2005;
 constexpr UINT kMenuMusicSettings = 2006;
 
+std::wstring UiLauncherPath()
+{
+  wchar_t exe[MAX_PATH] = {};
+  const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH)
+    return L"OHL-Control.exe";
+
+  std::wstring path(exe, n);
+  const size_t slash = path.find_last_of(L"\\/");
+  if (slash == std::wstring::npos)
+    return L"OHL-Control.exe";
+
+  return path.substr(0, slash + 1) + L"OHL-Control.exe";
+}
+
 std::wstring WidenUtf8(const std::string& s)
 {
   if (s.empty()) return {};
@@ -190,22 +205,16 @@ void TrayIcon::UpdateIcon(bool force)
 
 void TrayIcon::LaunchSwitcher()
 {
-  wchar_t exe[MAX_PATH] = {};
-  if (!GetModuleFileNameW(nullptr, exe, MAX_PATH))
-    return;
-
-  HINSTANCE rc = ShellExecuteW(nullptr, L"open", exe, L"--switcher", nullptr, SW_SHOWNORMAL);
+  const std::wstring exe = UiLauncherPath();
+  HINSTANCE rc = ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
   if (reinterpret_cast<INT_PTR>(rc) <= 32)
     std::fprintf(stderr, "[Tray] failed to launch switcher\n");
 }
 
 void TrayIcon::LaunchMusicSettings()
 {
-  wchar_t exe[MAX_PATH] = {};
-  if (!GetModuleFileNameW(nullptr, exe, MAX_PATH))
-    return;
-
-  HINSTANCE rc = ShellExecuteW(nullptr, L"open", exe, L"--music-settings", nullptr, SW_SHOWNORMAL);
+  const std::wstring exe = UiLauncherPath();
+  HINSTANCE rc = ShellExecuteW(nullptr, L"open", exe.c_str(), L"--music-settings", nullptr, SW_SHOWNORMAL);
   if (reinterpret_cast<INT_PTR>(rc) <= 32)
     std::fprintf(stderr, "[Tray] failed to launch OHL Music settings\n");
 }
