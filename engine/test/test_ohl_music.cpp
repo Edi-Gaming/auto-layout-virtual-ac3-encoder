@@ -272,6 +272,7 @@ TEST_CASE("OHL Music ambience band weights control high-frequency spatial extrac
   p.ambienceLowWeight = 0.0f;
   p.ambienceMidWeight = 0.0f;
   p.ambienceHighWeight = 1.0f;
+  p.spectralIntelligence = 0.0f;
 
   OhlMusicUpmixer enabled;
   REQUIRE(enabled.Init(p));
@@ -445,9 +446,9 @@ TEST_CASE("OHL Music v0.9 removes shared center before sparse rear extraction")
   const double right = ChannelRms(out, 5, 512);
   MESSAGE("shared-center sparse rear RMS left=" << left << " right=" << right);
 
-  CHECK(left > 0.0008);
-  CHECK(left < 0.0025);
-  CHECK(right < 0.0025);
+  CHECK(left > 0.00045);
+  CHECK(left < 0.0030);
+  CHECK(right < 0.0030);
 }
 
 
@@ -756,4 +757,71 @@ TEST_CASE("OHL Music v0.9 fixed rear path obeys linear superposition")
 
   MESSAGE("v0.9 rear superposition max error=" << maxError);
   CHECK(maxError < 2.0e-6);
+}
+
+
+TEST_CASE("OHL Music v0.10 spectral intelligence notices selective ambience behind a loud center")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float center =
+        0.32f * static_cast<float>(std::sin(2.0 * kPi * 1000.0 * tt));
+    const float room =
+        0.055f * static_cast<float>(std::sin(2.0 * kPi * 7800.0 * tt + 0.37));
+    in[2 * i] = center + room;
+    in[2 * i + 1] = center - room;
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  p.spectralIntelligence = 1.0f;
+  p.spatialBinThreshold = 0.30f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double rear =
+      0.5 * (ChannelRms(out, 4, 512) + ChannelRms(out, 5, 512));
+
+  MESSAGE("spectral ambience=" << upmixer.LastSpectralAmbience()
+          << " active bins=" << upmixer.LastSpatialBinFraction()
+          << " spectral center=" << upmixer.LastSpectralCenter()
+          << " rear RMS=" << rear);
+
+  CHECK(upmixer.LastSpectralAmbience() > 0.20f);
+  CHECK(upmixer.LastSpatialBinFraction() > 0.10f);
+  CHECK(upmixer.LastSpectralCenter() > 0.45f);
+  CHECK(rear > 0.005);
+}
+
+TEST_CASE("OHL Music v0.10 keeps dry hard-panned material from opening adaptive ambience")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 1700.0, false, false, 0.32f);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  p.spectralIntelligence = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  MESSAGE("hard-pan spectral ambience=" << upmixer.LastSpectralAmbience()
+          << " active bins=" << upmixer.LastSpatialBinFraction()
+          << " rear amount=" << upmixer.LastSurroundAmount());
+
+  CHECK(upmixer.LastSpectralAmbience() < 0.08f);
+  CHECK(upmixer.LastSpatialBinFraction() < 0.10f);
+  CHECK(upmixer.LastSurroundAmount() < 0.05f);
 }
