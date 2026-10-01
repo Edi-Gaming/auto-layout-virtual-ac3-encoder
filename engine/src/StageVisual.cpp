@@ -182,8 +182,8 @@ LRESULT CALLBACK StageProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       const POINT fl{58, 72};
       const POINT fc{w / 2, 58};
       const POINT fr{w - 58, 72};
-      const POINT sl{62, std::min(h - 60, head.y + 85)};
-      const POINT sr{w - 62, std::min(h - 60, head.y + 85)};
+      const POINT sl{62, std::min(h - 60, static_cast<int>(head.y) + 85)};
+      const POINT sr{w - 62, std::min(h - 60, static_cast<int>(head.y) + 85)};
 
       const float rearActivity = std::clamp(
           0.58f * s->metrics.rearOpen +
