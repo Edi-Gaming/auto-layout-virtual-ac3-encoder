@@ -1084,8 +1084,52 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         SetDlgItemTextW(hwnd, kStatus, msgText.c_str());
         return 0;
       }
+      if (id == kStoreA || id == kStoreB)
+      {
+        PullControlsToState(hwnd, *state);
+        if (id == kStoreA)
+        {
+          gSnapshotA = *state;
+          gHaveSnapshotA = true;
+          SetDlgItemTextW(hwnd, kStatus, L"Snapshot A stored from current controls.");
+        }
+        else
+        {
+          gSnapshotB = *state;
+          gHaveSnapshotB = true;
+          SetDlgItemTextW(hwnd, kStatus, L"Snapshot B stored from current controls.");
+        }
+        return 0;
+      }
+      if (id == kRecallA || id == kRecallB)
+      {
+        const bool have = id == kRecallA ? gHaveSnapshotA : gHaveSnapshotB;
+        if (!have)
+        {
+          SetDlgItemTextW(hwnd, kStatus,
+                          id == kRecallA ? L"Snapshot A is empty." : L"Snapshot B is empty.");
+          return 0;
+        }
+
+        const std::string configPath = state->configPath;
+        *state = id == kRecallA ? gSnapshotA : gSnapshotB;
+        state->configPath = configPath;
+        PushStateToControls(hwnd, *state);
+        Apply(hwnd, *state);
+        SetDlgItemTextW(hwnd, kStatus,
+                        id == kRecallA ? L"Snapshot A applied live." : L"Snapshot B applied live.");
+        return 0;
+      }
       break;
     }
+
+    case WM_TIMER:
+      if (wp == kMetricsTimer)
+      {
+        RefreshMetrics(hwnd);
+        return 0;
+      }
+      break;
 
     case WM_CTLCOLORSTATIC:
     {
@@ -1096,6 +1140,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     }
 
     case WM_DESTROY:
+      KillTimer(hwnd, kMetricsTimer);
       if (gTitleFont) { DeleteObject(gTitleFont); gTitleFont = nullptr; }
       if (gUiFont) { DeleteObject(gUiFont); gUiFont = nullptr; }
       if (gSmallFont) { DeleteObject(gSmallFont); gSmallFont = nullptr; }
