@@ -1,9 +1,9 @@
 // OhlMusicUpmixer.h — stereo -> discrete 5.1 OHL Music spatializer.
 //
-// v0.8 keeps the v0.7 rear-energy safety rail but restores an audible surround bed:
-//  * a quiet continuous unique-L/R bed widens ordinary stereo,
-//  * balanced diffuse side information adds a stronger ambience layer,
-//  * hard-panned material stays subtle and the rear RMS budget still prevents rear-main behavior.
+// v0.9 removes the nonlinear sample-wise rear extractor entirely:
+//  * exact mono/center disappears naturally through the linear M/S side signal,
+//  * two short all-pass phase networks decorrelate SL/SR without adding nonlinear distortion,
+//  * front-lock, transient protection and rear budget act only as slow gains.
 //
 // Output channel order matches Windows/AC3 5.1-back: FL FR FC LFE BL BR.
 #pragma once
@@ -31,8 +31,8 @@ public:
     float ambienceReleaseMs = 520.0f;
     float diffuseThreshold = 0.10f;
 
-    // 0..1 attenuation strength applied to unshared residuals when the packet is strongly
-    // center/coherent. Shared content itself is always removed structurally.
+    // 0..1 attenuation strength applied to the rear side field when a coherent front center
+    // dominates. This is a gain control only; it never modifies waveform shape sample-by-sample.
     float frontLock = 0.88f;
 
     // Maximum average rear-channel RMS as a fraction of average front-channel RMS.
@@ -109,6 +109,17 @@ private:
     float value = 0.0f;
   };
 
+  struct Allpass1
+  {
+    void Configure(float coefficient);
+    void Reset();
+    float Process(float x);
+
+    float a = 0.0f;
+    float x1 = 0.0f;
+    float y1 = 0.0f;
+  };
+
   Params params_{};
   std::array<int, kChannels> delaySamples_{{0, 0, 0, 0, 0, 0}};
   std::array<DelayLine, kChannels> delays_;
@@ -122,6 +133,8 @@ private:
   OnePoleHighpass rearHpR_;
   OnePoleLowpass rearLpL_;
   OnePoleLowpass rearLpR_;
+  std::array<Allpass1, 2> rearDecorL_;
+  std::array<Allpass1, 2> rearDecorR_;
   std::vector<float> rearScratchL_;
   std::vector<float> rearScratchR_;
   OnePoleHighpass centerHp_;
