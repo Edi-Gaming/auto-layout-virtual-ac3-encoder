@@ -87,6 +87,7 @@ add_executable(engine
   src/DeviceEnum.h
   src/ModeControl.cpp
   src/ModeControl.h
+  src/SurroundTestState.h
   src/ModernControls.cpp
   src/ModernControls.h
   src/MacroKnob.cpp
@@ -127,6 +128,9 @@ add_executable(ohl_ui WIN32
   src/BrandIcon.h
   src/ModeControl.cpp
   src/ModeControl.h
+  src/SurroundTestState.h
+  src/SurroundWizard.cpp
+  src/SurroundWizard.h
   src/MusicCaptureLogger.cpp
   src/MusicCaptureLogger.h
   src/ModernControls.cpp
