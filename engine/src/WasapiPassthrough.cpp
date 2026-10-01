@@ -130,6 +130,28 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
   }
   framesPerPacket_ = enc51_.FramesPerPacket();
 
+  // Surround Wizard always gets its own explicit interleaved-float 5.1 encoder. This keeps
+  // diagnostics independent of both the native multichannel input path and OHL Music DSP.
+  {
+    SpdifEncoder::Params tp;
+    tp.sampleRate = rate;
+    tp.bitRate = params_.bitRate;
+    tp.inSampleFmt = AV_SAMPLE_FMT_FLT;
+    tp.upmix = SpdifEncoder::Upmix::Off;
+    tp.outputLayout = SpdifEncoder::OutputLayout::Surround51;
+    AVChannelLayout testLayout = AV_CHANNEL_LAYOUT_5POINT1_BACK;
+    av_channel_layout_copy(&tp.inLayout, &testLayout);
+
+    encOk = encTest51_.Init(tp);
+    av_channel_layout_uninit(&tp.inLayout);
+    if (!encOk || encTest51_.FramesPerPacket() != framesPerPacket_)
+    {
+      std::fprintf(stderr, "[SurroundWizard] failed to initialize diagnostic AC3 5.1 encoder\n");
+      av_channel_layout_uninit(&ep.inLayout);
+      return false;
+    }
+  }
+
   if (params_.autoLayout)
   {
     if (params_.musicStereo)
@@ -277,6 +299,8 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
   staging_.resize(pktBytes);
   silence_.assign(pktBytes, 0);
   burst_.resize(kBurstBytes);
+  test51_.resize(static_cast<size_t>(framesPerPacket_) * 6);
+  testFadeSamples_ = std::max(1, rate / 100); // 10 ms click-safe route crossfade
   if (params_.autoLayout && params_.musicStereo)
   {
     musicStereo_.resize(static_cast<size_t>(framesPerPacket_) * 2);
@@ -475,6 +499,82 @@ WasapiPassthrough::SelectAutoPayload(const uint8_t* in, bool haveRealInput)
   return params_.musicStereo ? AutoPayload::Music51 : AutoPayload::ReceiverStereo;
 }
 
+bool WasapiPassthrough::RenderSurroundTest(float* out51)
+{
+  if (!out51 || !params_.surroundTestState)
+    return false;
+
+  const uint64_t revision = params_.surroundTestState->Revision();
+  if (revision != testLastRevision_)
+  {
+    testLastRevision_ = revision;
+    testFromRoute_ = testToRoute_;
+    testToRoute_ = params_.surroundTestState->Route();
+    testFrequencyHz_ = static_cast<double>(params_.surroundTestState->FrequencyHz());
+    testAmplitude_ = std::pow(10.0, params_.surroundTestState->LevelDb() / 20.0);
+    testFadePos_ = 0;
+  }
+
+  // After an OFF request has fully faded there is no override; normal program audio resumes.
+  if (testFromRoute_ == SurroundTestRoute::Off &&
+      testToRoute_ == SurroundTestRoute::Off &&
+      testFadePos_ >= testFadeSamples_)
+    return false;
+
+  std::fill(out51, out51 + static_cast<size_t>(framesPerPacket_) * 6, 0.0f);
+
+  const double rate = static_cast<double>(capFmt_.sampleRate);
+  const double step = 2.0 * 3.14159265358979323846 * testFrequencyHz_ / rate;
+
+  auto routeSample = [](SurroundTestRoute route, float gain, float sample, float* frame)
+  {
+    const float v = gain * sample;
+    switch (route)
+    {
+      case SurroundTestRoute::FL: frame[0] += v; break;
+      case SurroundTestRoute::FR: frame[1] += v; break;
+      case SurroundTestRoute::C:  frame[2] += v; break;
+      case SurroundTestRoute::LFE: frame[3] += v; break;
+      case SurroundTestRoute::SL: frame[4] += v; break;
+      case SurroundTestRoute::SR: frame[5] += v; break;
+      case SurroundTestRoute::FL_LFE:
+        frame[0] += v;
+        frame[3] += v;
+        break;
+      case SurroundTestRoute::Off:
+        break;
+    }
+  };
+
+  for (int i = 0; i < framesPerPacket_; ++i)
+  {
+    float fromGain = 0.0f;
+    float toGain = 1.0f;
+    if (testFadePos_ < testFadeSamples_)
+    {
+      const float t = static_cast<float>(testFadePos_) /
+                      static_cast<float>(testFadeSamples_);
+      fromGain = 1.0f - t;
+      toGain = t;
+      ++testFadePos_;
+      if (testFadePos_ >= testFadeSamples_)
+        testFromRoute_ = testToRoute_;
+    }
+
+    const float sample =
+        static_cast<float>(std::sin(testPhase_) * testAmplitude_);
+    float* frame = out51 + static_cast<size_t>(i) * 6;
+    routeSample(testFromRoute_, fromGain, sample, frame);
+    routeSample(testToRoute_, toGain, sample, frame);
+
+    testPhase_ += step;
+    if (testPhase_ >= 2.0 * 3.14159265358979323846)
+      testPhase_ = std::fmod(testPhase_, 2.0 * 3.14159265358979323846);
+  }
+
+  return true;
+}
+
 bool WasapiPassthrough::InitExclusive(int rate)
 {
   HR_FAIL(dev_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &client_),
@@ -590,12 +690,20 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
       in = silence_.data();
     }
 
-    const AutoPayload payload = SelectAutoPayload(in, haveRealInput);
     SpdifEncoder* enc = nullptr;
     const uint8_t* encodeIn = in;
 
-    switch (payload)
+    const bool testOverride = RenderSurroundTest(test51_.data());
+    if (testOverride)
     {
+      enc = &encTest51_;
+      encodeIn = reinterpret_cast<const uint8_t*>(test51_.data());
+    }
+    else
+    {
+      const AutoPayload payload = SelectAutoPayload(in, haveRealInput);
+      switch (payload)
+      {
       case AutoPayload::Native51:
         enc = &enc51_;
         break;
@@ -682,6 +790,7 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
         encodeIn = reinterpret_cast<const uint8_t*>(music51_.data());
         enc = &encMusic51_;
         break;
+      }
     }
 
     int n = enc->EncodePacket(encodeIn, burst_.data(), static_cast<int>(burst_.size()));
@@ -711,6 +820,11 @@ bool WasapiPassthrough::Start()
   quietPackets_ = 0;
   engineFrameCounter_ = 0;
   musicPacketSequence_ = 0;
+  testLastRevision_ = 0;
+  testFromRoute_ = SurroundTestRoute::Off;
+  testToRoute_ = SurroundTestRoute::Off;
+  testFadePos_ = testFadeSamples_;
+  testPhase_ = 0.0;
   if (params_.autoLayout && params_.musicStereo)
     musicUpmixer_.Reset();
 
