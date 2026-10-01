@@ -1,5 +1,7 @@
 #include "StageVisual.h"
 
+#include <windowsx.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -17,12 +19,34 @@ constexpr COLORREF kBlue = RGB(86, 180, 255);
 constexpr COLORREF kGreen = RGB(86, 214, 154);
 constexpr COLORREF kPurple = RGB(173, 126, 255);
 constexpr COLORREF kAmber = RGB(241, 187, 84);
+constexpr COLORREF kRose = RGB(243, 111, 142);
+
+struct Vec2
+{
+  double x = 0.0;
+  double y = 0.0;
+};
 
 struct StageState
 {
   std::array<float, 5> distances{{33.0f, 30.0f, 33.0f, 27.0f, 33.0f}};
   OhlAnalyzerMetrics metrics{};
+  std::array<POINT, 5> speakerPoints{};
+  POINT listener{};
+  int hoverSpeaker = -1;
+  int dragSpeaker = -1;
+  float scalePxPerInch = 3.0f;
 };
+
+constexpr std::array<Vec2, 5> kDirections{{
+    {-0.72, -0.69},  // FL
+    { 0.00, -1.00},  // C
+    { 0.72, -0.69},  // FR
+    {-0.82,  0.57},  // SL
+    { 0.82,  0.57},  // SR
+}};
+
+constexpr const wchar_t* kNames[5] = {L"FL", L"C", L"FR", L"SL", L"SR"};
 
 void FillRectColor(HDC dc, const RECT& r, COLORREF color)
 {
@@ -80,44 +104,177 @@ void DrawConnection(HDC dc, POINT a, POINT b, COLORREF color, int width)
   DeleteObject(p);
 }
 
+float SpeakerActivity(const OhlAnalyzerMetrics& metrics, int stageIndex)
+{
+  static constexpr int channelMap[5] = {0, 2, 1, 4, 5};
+  const float rms = std::max(0.0f, metrics.speakerRms[channelMap[stageIndex]]);
+  return std::clamp(static_cast<float>(std::sqrt(rms * 4.5f)), 0.0f, 1.0f);
+}
+
+void ComputeGeometry(StageState& s, const RECT& r)
+{
+  const int w = static_cast<int>(r.right - r.left);
+  const int h = static_cast<int>(r.bottom - r.top);
+  s.listener = {w / 2, static_cast<LONG>(h * 57 / 100)};
+
+  const float maxDistance = std::max(
+      36.0f,
+      *std::max_element(s.distances.begin(), s.distances.end()));
+
+  const double availableFront = std::max(90.0, static_cast<double>(s.listener.y - 55));
+  const double availableSide = std::max(90.0, static_cast<double>(w / 2 - 60));
+  s.scalePxPerInch = static_cast<float>(std::min(
+      3.4,
+      std::min(availableFront, availableSide) / static_cast<double>(maxDistance)));
+
+  for (int i = 0; i < 5; ++i)
+  {
+    const double radius = static_cast<double>(s.distances[i]) * s.scalePxPerInch;
+    s.speakerPoints[i] = {
+        s.listener.x + static_cast<LONG>(std::lround(kDirections[i].x * radius)),
+        s.listener.y + static_cast<LONG>(std::lround(kDirections[i].y * radius))};
+  }
+}
+
+int HitTestSpeaker(const StageState& s, int x, int y)
+{
+  for (int i = 0; i < 5; ++i)
+  {
+    const double dx = static_cast<double>(x - s.speakerPoints[i].x);
+    const double dy = static_cast<double>(y - s.speakerPoints[i].y);
+    if (dx * dx + dy * dy <= 28.0 * 28.0)
+      return i;
+  }
+  return -1;
+}
+
+float DistanceFromMouse(const StageState& s, int speaker, int x, int y)
+{
+  const Vec2 dir = kDirections[static_cast<size_t>(speaker)];
+  const double dx = static_cast<double>(x - s.listener.x);
+  const double dy = static_cast<double>(y - s.listener.y);
+  const double projection = dx * dir.x + dy * dir.y;
+  const double inches = projection / std::max(0.1f, s.scalePxPerInch);
+  return static_cast<float>(std::clamp(inches, 12.0, 120.0));
+}
+
+void SendDistanceChange(HWND hwnd, int speaker, float inches)
+{
+  const LPARAM packed = static_cast<LPARAM>(std::lround(inches * 100.0f));
+  SendMessageW(
+      GetParent(hwnd),
+      OHL_STAGE_DISTANCE_CHANGED,
+      static_cast<WPARAM>(speaker),
+      packed);
+}
+
 void DrawSpeaker(HDC dc,
                  HFONT font,
-                 int cx,
-                 int cy,
+                 POINT p,
                  const wchar_t* name,
                  float inches,
                  float activity,
+                 bool hovered,
+                 bool dragging,
                  COLORREF activeColor)
 {
   activity = std::clamp(activity, 0.0f, 1.0f);
-  const COLORREF shell = Blend(RGB(33, 42, 55), activeColor, 0.22f + 0.55f * activity);
-  RECT body{cx - 20, cy - 25, cx + 20, cy + 19};
-  FillRound(dc, body, 8, shell);
+  const float interaction = dragging ? 1.0f : hovered ? 0.70f : 0.0f;
+  const COLORREF shell = Blend(
+      RGB(31, 39, 52),
+      activeColor,
+      std::clamp(0.18f + 0.55f * activity + 0.20f * interaction, 0.0f, 1.0f));
 
-  HPEN border = CreatePen(PS_SOLID, 1, Blend(kBorder, activeColor, activity));
+  const int halfW = hovered || dragging ? 23 : 20;
+  const int halfH = hovered || dragging ? 27 : 24;
+  RECT body{p.x - halfW, p.y - halfH, p.x + halfW, p.y + halfH - 4};
+
+  if (activity > 0.05f)
+  {
+    const int glow = 5 + static_cast<int>(std::lround(activity * 9.0f));
+    RECT glowRect{
+        body.left - glow, body.top - glow,
+        body.right + glow, body.bottom + glow};
+    FillRound(dc, glowRect, 12, Blend(kCard, activeColor, 0.10f + 0.16f * activity));
+  }
+
+  FillRound(dc, body, 9, shell);
+
+  HPEN border = CreatePen(
+      PS_SOLID,
+      dragging ? 2 : 1,
+      Blend(kBorder, activeColor, std::max(activity, interaction)));
   HGDIOBJ oldP = SelectObject(dc, border);
   HGDIOBJ oldB = SelectObject(dc, GetStockObject(NULL_BRUSH));
-  RoundRect(dc, body.left, body.top, body.right - 1, body.bottom - 1, 8, 8);
+  RoundRect(dc, body.left, body.top, body.right - 1, body.bottom - 1, 9, 9);
   SelectObject(dc, oldB);
   SelectObject(dc, oldP);
   DeleteObject(border);
 
-  HBRUSH woofer = CreateSolidBrush(Blend(RGB(25, 31, 41), activeColor, 0.45f * activity));
+  HBRUSH woofer = CreateSolidBrush(
+      Blend(RGB(20, 26, 35), activeColor, 0.35f + 0.35f * activity));
   oldB = SelectObject(dc, woofer);
   oldP = SelectObject(dc, GetStockObject(NULL_PEN));
-  Ellipse(dc, cx - 9, cy - 11, cx + 9, cy + 7);
+  Ellipse(dc, p.x - 9, p.y - 10, p.x + 9, p.y + 8);
   SelectObject(dc, oldP);
   SelectObject(dc, oldB);
   DeleteObject(woofer);
 
-  RECT nameRect{cx - 35, cy + 23, cx + 35, cy + 41};
+  RECT nameRect{p.x - 36, p.y + 24, p.x + 36, p.y + 42};
   DrawTextSimple(dc, font, kText, name, nameRect,
                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
   wchar_t dist[32] = {};
-  swprintf_s(dist, L"%.0f in", inches);
-  RECT distRect{cx - 35, cy + 39, cx + 35, cy + 56};
-  DrawTextSimple(dc, font, kMuted, dist, distRect,
+  swprintf_s(dist, L"%.1f in", inches);
+  RECT distRect{p.x - 40, p.y + 40, p.x + 40, p.y + 57};
+  DrawTextSimple(
+      dc, font,
+      dragging || hovered ? activeColor : kMuted,
+      dist, distRect,
+      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+void DrawListener(HDC dc, HFONT font, POINT head, float field)
+{
+  const int halo = 34 + static_cast<int>(std::lround(25.0f * field));
+  HPEN haloPen = CreatePen(PS_SOLID, 2, Blend(kGrid, kBlue, field));
+  HGDIOBJ oldP = SelectObject(dc, haloPen);
+  HGDIOBJ oldB = SelectObject(dc, GetStockObject(NULL_BRUSH));
+  Ellipse(dc, head.x - halo, head.y - halo, head.x + halo, head.y + halo);
+  SelectObject(dc, oldB);
+  SelectObject(dc, oldP);
+  DeleteObject(haloPen);
+
+  HBRUSH ear = CreateSolidBrush(RGB(50, 60, 76));
+  oldB = SelectObject(dc, ear);
+  oldP = SelectObject(dc, GetStockObject(NULL_PEN));
+  Ellipse(dc, head.x - 27, head.y - 10, head.x - 15, head.y + 10);
+  Ellipse(dc, head.x + 15, head.y - 10, head.x + 27, head.y + 10);
+  SelectObject(dc, oldP);
+  SelectObject(dc, oldB);
+  DeleteObject(ear);
+
+  HBRUSH headBrush = CreateSolidBrush(RGB(45, 54, 69));
+  oldB = SelectObject(dc, headBrush);
+  oldP = SelectObject(dc, GetStockObject(NULL_PEN));
+  Ellipse(dc, head.x - 21, head.y - 23, head.x + 21, head.y + 23);
+  SelectObject(dc, oldP);
+  SelectObject(dc, oldB);
+  DeleteObject(headBrush);
+
+  HPEN facing = CreatePen(PS_SOLID, 2, kText);
+  oldP = SelectObject(dc, facing);
+  MoveToEx(dc, head.x, head.y - 15, nullptr);
+  LineTo(dc, head.x, head.y - 31);
+  MoveToEx(dc, head.x - 6, head.y - 11, nullptr);
+  LineTo(dc, head.x - 11, head.y - 19);
+  MoveToEx(dc, head.x + 6, head.y - 11, nullptr);
+  LineTo(dc, head.x + 11, head.y - 19);
+  SelectObject(dc, oldP);
+  DeleteObject(facing);
+
+  RECT label{head.x - 48, head.y + 29, head.x + 48, head.y + 48};
+  DrawTextSimple(dc, font, kMuted, L"LISTENER", label,
                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
@@ -132,6 +289,85 @@ LRESULT CALLBACK StageProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
   switch (msg)
   {
+    case WM_SETCURSOR:
+      if (s && (s->hoverSpeaker >= 0 || s->dragSpeaker >= 0))
+      {
+        SetCursor(LoadCursor(nullptr, s->dragSpeaker >= 0 ? IDC_SIZENS : IDC_HAND));
+        return TRUE;
+      }
+      break;
+
+    case WM_MOUSEMOVE:
+      if (s)
+      {
+        RECT r{};
+        GetClientRect(hwnd, &r);
+        ComputeGeometry(*s, r);
+
+        const int x = GET_X_LPARAM(lp);
+        const int y = GET_Y_LPARAM(lp);
+
+        if (s->dragSpeaker >= 0)
+        {
+          const float inches = DistanceFromMouse(*s, s->dragSpeaker, x, y);
+          s->distances[static_cast<size_t>(s->dragSpeaker)] = inches;
+          SendDistanceChange(hwnd, s->dragSpeaker, inches);
+          InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        else
+        {
+          const int hit = HitTestSpeaker(*s, x, y);
+          if (hit != s->hoverSpeaker)
+          {
+            s->hoverSpeaker = hit;
+            InvalidateRect(hwnd, nullptr, FALSE);
+          }
+          TRACKMOUSEEVENT tme{sizeof(tme), TME_LEAVE, hwnd, 0};
+          TrackMouseEvent(&tme);
+        }
+      }
+      return 0;
+
+    case WM_MOUSELEAVE:
+      if (s && s->dragSpeaker < 0 && s->hoverSpeaker >= 0)
+      {
+        s->hoverSpeaker = -1;
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+
+    case WM_LBUTTONDOWN:
+      if (s)
+      {
+        RECT r{};
+        GetClientRect(hwnd, &r);
+        ComputeGeometry(*s, r);
+        const int hit = HitTestSpeaker(*s, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        if (hit >= 0)
+        {
+          s->dragSpeaker = hit;
+          s->hoverSpeaker = hit;
+          SetCapture(hwnd);
+          SetFocus(hwnd);
+          InvalidateRect(hwnd, nullptr, FALSE);
+        }
+      }
+      return 0;
+
+    case WM_LBUTTONUP:
+      if (s && s->dragSpeaker >= 0)
+      {
+        const int speaker = s->dragSpeaker;
+        const float inches = DistanceFromMouse(
+            *s, speaker, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        s->distances[static_cast<size_t>(speaker)] = inches;
+        SendDistanceChange(hwnd, speaker, inches);
+        s->dragSpeaker = -1;
+        ReleaseCapture();
+        InvalidateRect(hwnd, nullptr, FALSE);
+      }
+      return 0;
+
     case WM_ERASEBKGND:
       return 1;
 
@@ -150,104 +386,80 @@ LRESULT CALLBACK StageProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       HGDIOBJ oldBmp = SelectObject(mem, bmp);
 
       FillRectColor(mem, r, kBg);
-      FillRound(mem, r, 12, kCard);
+      FillRound(mem, r, 14, kCard);
 
       HPEN border = CreatePen(PS_SOLID, 1, kBorder);
       HGDIOBJ oldP = SelectObject(mem, border);
       HGDIOBJ oldB = SelectObject(mem, GetStockObject(NULL_BRUSH));
-      RoundRect(mem, r.left, r.top, r.right - 1, r.bottom - 1, 12, 12);
+      RoundRect(mem, r.left, r.top, r.right - 1, r.bottom - 1, 14, 14);
       SelectObject(mem, oldB);
       SelectObject(mem, oldP);
       DeleteObject(border);
 
       HFONT font = reinterpret_cast<HFONT>(SendMessageW(hwnd, WM_GETFONT, 0, 0));
-      RECT title{16, 9, r.right - 16, 29};
+      RECT title{16, 10, r.right - 16, 31};
       DrawTextSimple(mem, font, kText, L"LISTENING STAGE", title,
                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-      if (!s)
+      RECT helper{16, 30, r.right - 16, 49};
+      DrawTextSimple(mem, font, kMuted, L"drag a speaker radially to set its distance",
+                     helper, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+      if (s)
       {
-        BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
-        SelectObject(mem, oldBmp);
-        DeleteObject(bmp);
-        DeleteDC(mem);
-        EndPaint(hwnd, &ps);
-        return 0;
+        ComputeGeometry(*s, r);
+
+        const float field = std::clamp(
+            0.60f * s->metrics.ambience +
+            0.40f * s->metrics.spatialBins,
+            0.0f, 1.0f);
+
+        const std::array<COLORREF, 5> colors{{
+            kBlue, kPurple, kBlue, kGreen, kGreen}};
+
+        for (int i = 0; i < 5; ++i)
+        {
+          const float activity = SpeakerActivity(s->metrics, i);
+          DrawConnection(
+              mem,
+              s->listener,
+              s->speakerPoints[i],
+              Blend(kGrid, colors[static_cast<size_t>(i)], 0.18f + 0.72f * activity),
+              activity > 0.55f ? 2 : 1);
+        }
+
+        DrawListener(mem, font, s->listener, field);
+
+        for (int i = 0; i < 5; ++i)
+        {
+          DrawSpeaker(
+              mem,
+              font,
+              s->speakerPoints[i],
+              kNames[i],
+              s->distances[static_cast<size_t>(i)],
+              SpeakerActivity(s->metrics, i),
+              s->hoverSpeaker == i,
+              s->dragSpeaker == i,
+              colors[static_cast<size_t>(i)]);
+        }
+
+        wchar_t scene[128] = {};
+        swprintf_s(
+            scene,
+            L"field %d%%   rear %d%%   center %d%%",
+            static_cast<int>(std::lround(field * 100.0f)),
+            static_cast<int>(std::lround(std::clamp(s->metrics.rearOpen, 0.0f, 1.0f) * 100.0f)),
+            static_cast<int>(std::lround(std::clamp(s->metrics.center, 0.0f, 1.0f) * 100.0f)));
+        RECT fieldRect{16, r.bottom - 27, r.right - 16, r.bottom - 8};
+        DrawTextSimple(
+            mem,
+            font,
+            field > 0.30f ? kGreen : kMuted,
+            scene,
+            fieldRect,
+            DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
       }
-
-      const int w = static_cast<int>(r.right - r.left);
-      const int h = static_cast<int>(r.bottom - r.top);
-      const POINT head{w / 2, std::max(120, h * 58 / 100)};
-
-      const POINT fl{58, 72};
-      const POINT fc{w / 2, 58};
-      const POINT fr{w - 58, 72};
-      const POINT sl{62, std::min(h - 60, static_cast<int>(head.y) + 85)};
-      const POINT sr{w - 62, std::min(h - 60, static_cast<int>(head.y) + 85)};
-
-      const float rearActivity = std::clamp(
-          0.58f * s->metrics.rearOpen +
-          0.42f * (s->metrics.ownership[1] + s->metrics.ownership[2] +
-                   s->metrics.ownership[3]) / 3.0f,
-          0.0f, 1.0f);
-      const float centerActivity = std::clamp(s->metrics.center, 0.0f, 1.0f);
-      const float field = std::clamp(
-          0.6f * s->metrics.ambience + 0.4f * s->metrics.spatialBins,
-          0.0f, 1.0f);
-
-      // Spatial field rings around the listener.
-      HPEN fieldPen = CreatePen(PS_SOLID, 2, Blend(kGrid, kBlue, field));
-      oldP = SelectObject(mem, fieldPen);
-      oldB = SelectObject(mem, GetStockObject(NULL_BRUSH));
-      const int ring = 36 + static_cast<int>(std::lround(22.0f * field));
-      Ellipse(mem, head.x - ring, head.y - ring, head.x + ring, head.y + ring);
-      SelectObject(mem, oldB);
-      SelectObject(mem, oldP);
-      DeleteObject(fieldPen);
-
-      // Signal paths.
-      DrawConnection(mem, head, fl, Blend(kGrid, kBlue, 0.35f), 1);
-      DrawConnection(mem, head, fc, Blend(kGrid, kPurple, 0.35f + 0.50f * centerActivity), 1);
-      DrawConnection(mem, head, fr, Blend(kGrid, kBlue, 0.35f), 1);
-      DrawConnection(mem, head, sl, Blend(kGrid, kGreen, 0.25f + 0.70f * rearActivity), rearActivity > 0.45f ? 2 : 1);
-      DrawConnection(mem, head, sr, Blend(kGrid, kGreen, 0.25f + 0.70f * rearActivity), rearActivity > 0.45f ? 2 : 1);
-
-      DrawSpeaker(mem, font, fl.x, fl.y, L"FL", s->distances[0], 0.35f, kBlue);
-      DrawSpeaker(mem, font, fc.x, fc.y, L"C", s->distances[1], centerActivity, kPurple);
-      DrawSpeaker(mem, font, fr.x, fr.y, L"FR", s->distances[2], 0.35f, kBlue);
-      DrawSpeaker(mem, font, sl.x, sl.y, L"SL", s->distances[3], rearActivity, kGreen);
-      DrawSpeaker(mem, font, sr.x, sr.y, L"SR", s->distances[4], rearActivity, kGreen);
-
-      // Listener head, facing the front stage.
-      HBRUSH headBrush = CreateSolidBrush(RGB(44, 52, 66));
-      oldB = SelectObject(mem, headBrush);
-      oldP = SelectObject(mem, GetStockObject(NULL_PEN));
-      Ellipse(mem, head.x - 20, head.y - 22, head.x + 20, head.y + 22);
-      SelectObject(mem, oldP);
-      SelectObject(mem, oldB);
-      DeleteObject(headBrush);
-
-      HPEN face = CreatePen(PS_SOLID, 2, kText);
-      oldP = SelectObject(mem, face);
-      MoveToEx(mem, head.x, head.y - 16, nullptr);
-      LineTo(mem, head.x, head.y - 28);
-      MoveToEx(mem, head.x - 6, head.y - 11, nullptr);
-      LineTo(mem, head.x - 10, head.y - 18);
-      MoveToEx(mem, head.x + 6, head.y - 11, nullptr);
-      LineTo(mem, head.x + 10, head.y - 18);
-      SelectObject(mem, oldP);
-      DeleteObject(face);
-
-      RECT listener{head.x - 42, head.y + 26, head.x + 42, head.y + 44};
-      DrawTextSimple(mem, font, kMuted, L"LISTENER", listener,
-                     DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-      wchar_t fieldText[64] = {};
-      swprintf_s(fieldText, L"spatial field  %d%%",
-                 static_cast<int>(std::lround(field * 100.0f)));
-      RECT fieldRect{16, h - 26, w - 16, h - 8};
-      DrawTextSimple(mem, font, field > 0.35f ? kGreen : kMuted, fieldText, fieldRect,
-                     DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
       BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
       SelectObject(mem, oldBmp);
@@ -283,7 +495,7 @@ bool RegisterOhlStageVisual(HINSTANCE instance)
 HWND CreateOhlStageVisual(HWND parent, int id, int x, int y, int w, int h)
 {
   return CreateWindowW(
-      kOhlStageClass, L"", WS_CHILD | WS_VISIBLE,
+      kOhlStageClass, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
       x, y, w, h, parent,
       reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
 }
