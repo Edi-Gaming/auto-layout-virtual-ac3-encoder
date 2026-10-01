@@ -89,6 +89,8 @@ add_executable(engine
   src/ModernControls.h
   src/AnalyzerVisual.cpp
   src/AnalyzerVisual.h
+  src/StageVisual.cpp
+  src/StageVisual.h
   src/MusicSettings.cpp
   src/MusicSettings.h
   src/TrayIcon.cpp
@@ -124,6 +126,8 @@ add_executable(ohl_ui WIN32
   src/ModernControls.h
   src/AnalyzerVisual.cpp
   src/AnalyzerVisual.h
+  src/StageVisual.cpp
+  src/StageVisual.h
   src/MusicSettings.cpp
   src/MusicSettings.h
 )
