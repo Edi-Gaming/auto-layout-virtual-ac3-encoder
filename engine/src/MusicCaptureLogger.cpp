@@ -202,11 +202,8 @@ std::string MusicCaptureLogger::Status::ToCompactString() const
 
 bool MusicCaptureLogger::Configure(const CaptureMetadata& metadata)
 {
-  const State state = state_.load(std::memory_order_acquire);
-  if (state == State::Armed || state == State::Recording ||
-      state == State::Complete || state == State::Saving)
-    return false;
-
+  // Active captures own a private metadata snapshot. Updating the configured metadata here is
+  // therefore safe even while an older bundle is finishing on the writer thread.
   std::lock_guard<std::mutex> lock(metadataMutex_);
   configuredMetadata_ = metadata;
   configured_.store(true, std::memory_order_release);
