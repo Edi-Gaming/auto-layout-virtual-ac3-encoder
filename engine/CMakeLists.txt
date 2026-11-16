@@ -109,7 +109,10 @@ add_executable(engine
 )
 target_link_libraries(engine PRIVATE ac3core ffmpeg ole32 avrt user32 gdi32 gdiplus shell32 comctl32 advapi32 comdlg32)
 if(MSVC)
-  target_compile_options(engine PRIVATE /permissive-)
+  # The Win32 UI contains Unicode punctuation in L"..." literals. Without /utf-8,
+  # MSVC can interpret UTF-8 source bytes using the active ANSI code page, resulting
+  # in mojibake (Â·, â†’, â€” etc.) at runtime.
+  target_compile_options(engine PRIVATE /permissive- /utf-8)
 endif()
 # Version string (override from CI: -DVAC3_VERSION=0.1.0). Use a generated header so the
 # quoting survives the VS generator (embedded-quote compile defs don't).
@@ -151,7 +154,7 @@ add_executable(ohl_ui WIN32
 set_target_properties(ohl_ui PROPERTIES OUTPUT_NAME "OHL-Control")
 target_link_libraries(ohl_ui PRIVATE user32 gdi32 gdiplus shell32 comctl32 advapi32 comdlg32)
 if(MSVC)
-  target_compile_options(ohl_ui PRIVATE /permissive-)
+  target_compile_options(ohl_ui PRIVATE /permissive- /utf-8)
 endif()
 
 # ---------------------------------------------------------------------------
