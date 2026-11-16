@@ -513,6 +513,11 @@ bool WasapiPassthrough::RenderSurroundTest(float* out51)
     testFrequencyHz_ = static_cast<double>(params_.surroundTestState->FrequencyHz());
     testAmplitude_ = std::pow(10.0, params_.surroundTestState->LevelDb() / 20.0);
     testFadePos_ = 0;
+    if (testToRoute_ == SurroundTestRoute::Sparkle)
+      sparkleField_.Configure(static_cast<int>(capFmt_.sampleRate),
+          params_.surroundTestState->SparkleRateHz(),
+          params_.surroundTestState->SparkleDecayMs(),
+          static_cast<OhlSparkleField::Texture>(params_.surroundTestState->SparkleTexture()));
   }
 
   // After an OFF request has fully faded there is no override; normal program audio resumes.
@@ -549,6 +554,7 @@ bool WasapiPassthrough::RenderSurroundTest(float* out51)
         frame[0] += v;
         frame[3] -= v; // 180-degree LFE polarity inversion
         break;
+      case SurroundTestRoute::Sparkle:
       case SurroundTestRoute::Off:
         break;
     }
@@ -574,6 +580,12 @@ bool WasapiPassthrough::RenderSurroundTest(float* out51)
     float* frame = out51 + static_cast<size_t>(i) * 6;
     routeSample(testFromRoute_, fromGain, sample, frame);
     routeSample(testToRoute_, toGain, sample, frame);
+
+    const float sparkleGain =
+        (testFromRoute_ == SurroundTestRoute::Sparkle ? fromGain : 0.0f) +
+        (testToRoute_ == SurroundTestRoute::Sparkle ? toGain : 0.0f);
+    if (sparkleGain > 0.0f)
+      sparkleField_.Render(frame, static_cast<float>(testAmplitude_) * sparkleGain);
 
     testPhase_ += step;
     if (testPhase_ >= 2.0 * 3.14159265358979323846)
@@ -833,6 +845,7 @@ bool WasapiPassthrough::Start()
   testToRoute_ = SurroundTestRoute::Off;
   testFadePos_ = testFadeSamples_;
   testPhase_ = 0.0;
+  sparkleField_.Reset();
   if (params_.autoLayout && params_.musicStereo)
     musicUpmixer_.Reset();
 
