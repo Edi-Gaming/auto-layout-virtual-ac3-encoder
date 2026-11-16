@@ -1,6 +1,7 @@
 #include "ModeControl.h"
 #include "MusicSettings.h"
 #include "SurroundWizard.h"
+#include "GuitarWorkflow.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -57,6 +58,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
   if (HasArg(argc, argv, L"--music-settings"))
   {
     rc = RunMusicSettingsGui(ExeDirUtf8() + "\\virtual-ac3-encoder.conf");
+  }
+  else if (HasArg(argc, argv, L"--guitar-launch"))
+  {
+    std::wstring error;
+    if (!LaunchGuitarSession(nullptr, error))
+    {
+      if (error != L"Selection cancelled.")
+        MessageBoxW(nullptr, error.c_str(), L"OHL Guitar Session", MB_OK | MB_ICONERROR);
+      rc = 1;
+    }
   }
   else if (HasArg(argc, argv, L"--surround-wizard"))
   {
