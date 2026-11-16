@@ -42,6 +42,7 @@ MANUAL SETUP (the quick setup does these config changes for you)
     guitar_in_id=
     guitar_loopback=false
     guitar_gain=0.50
+    guitar_safe_frames=480
     layout=auto
     stereo_processing=music
 
@@ -67,6 +68,8 @@ MANUAL SETUP (the quick setup does these config changes for you)
 EXTRA OPTIONS
 -------------
 guitar_gain=0.0..2.0          Guitar PCM level (default 0.50).
+guitar_safe_frames=0..1536  Extra clock-jitter margin in frames (default 480 = 10ms at 48k).
+                             Increase if underruns; decrease if monitoring feels delayed.
 guitar_in=...                 Recording endpoint friendly-name substring.
 guitar_in_id=...              Exact recording endpoint ID (overrides name).
 guitar_loopback=true          Read a RENDER endpoint instead, via WASAPI loopback.
