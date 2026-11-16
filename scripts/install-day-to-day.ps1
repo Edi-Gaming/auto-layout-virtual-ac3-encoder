@@ -62,6 +62,7 @@ if (-not (Test-Path $uiSrc)) {
 
 $startMenuDir = Join-Path $programsDir 'OHL Virtual AC3 Encoder'
 $shortcutPath = Join-Path $startMenuDir 'Audio Mode Switcher.lnk'
+$guitarShortcutPath = Join-Path $startMenuDir 'Play Guitar (ASIO).lnk'
 $startShortcutPath = Join-Path $startMenuDir 'Start OHL Encoder.lnk'
 
 Write-Host "Source folder     -> $SourceDir"
@@ -400,6 +401,16 @@ $shortcut.Description = 'OHL Virtual AC3 Encoder - Surround / Guitar mode switch
 $shortcut.IconLocation = $exePath + ',0'
 $shortcut.Save()
 
+# A pinnable one-click entry point. The OHL controller switches mode first, waits
+# for exclusive S/PDIF release, and only then starts the selected ASIO host.
+$guitarShortcut = $ws.CreateShortcut($guitarShortcutPath)
+$guitarShortcut.TargetPath = $uiPath
+$guitarShortcut.Arguments = '--guitar-launch'
+$guitarShortcut.WorkingDirectory = $InstallDir
+$guitarShortcut.Description = 'Launch a low-latency guitar session through OHL'
+$guitarShortcut.IconLocation = $exePath + ',0'
+$guitarShortcut.Save()
+
 # Manual recovery shortcut: safe to click whenever the engine was exited/closed.
 $startShortcut = $ws.CreateShortcut($startShortcutPath)
 $startShortcut.TargetPath = $wscriptPath
@@ -414,6 +425,7 @@ Write-Host "No-console UI    -> $uiPath"
 Write-Host "Preserved config  -> $configDst"
 Write-Host "Tray control      -> enabled"
 Write-Host "Mode shortcut     -> $shortcutPath"
+Write-Host "Guitar shortcut   -> $guitarShortcutPath"
 Write-Host "Start shortcut    -> $startShortcutPath"
 Write-Host "Authoritative startup -> $ohlStartupLnk"
 Write-Host ''
