@@ -21,6 +21,7 @@
 #include "MusicTelemetry.h"
 #include "MusicCaptureLogger.h"
 #include "SurroundTestState.h"
+#include "SparkleField.h"
 #include "WasapiCapture.h" // CaptureFormat
 
 #include <audioclient.h>
@@ -175,6 +176,7 @@ private:
   double testPhase_ = 0.0;
   double testFrequencyHz_ = 80.0;
   double testAmplitude_ = 0.0316227766; // -30 dBFS
+  OhlSparkleField sparkleField_;
 
   std::vector<uint8_t> staging_; // one packet of capture frames
   std::vector<uint8_t> silence_; // same, zeroed
