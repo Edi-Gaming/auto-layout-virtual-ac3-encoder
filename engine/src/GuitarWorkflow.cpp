@@ -79,28 +79,42 @@ bool LaunchGuitarSession(HWND owner, std::wstring& error)
   }
 
   std::string response;
-  if (!SendModeCommand("guitar", response, 1500) || response != "ok")
-  {
-    error = L"The OHL background engine is offline or refused Guitar mode.";
-    return false;
-  }
+  const bool unifiedBus = SendModeCommand("guitar bus", response, 1000) &&
+                          response == "active";
 
-  // Acknowledging the command is not enough: wait until the render thread
-  // and its exclusive WASAPI IAudioClient have actually been destroyed.
-  bool released = false;
-  for (int i = 0; i < 80; ++i)
+  if (unifiedBus)
   {
-    if (SendModeCommand("status", response, 300) && response == "guitar")
+    // With the independent guitar capture enabled, never relinquish optical
+    // ownership: AmpliTube feeds the virtual cable, OHL keeps music running.
+    if (!SendModeCommand("status", response, 500) || response != "surround")
     {
-      released = true;
-      break;
+      error = L"OHL concurrent guitar bus is not in Surround mode.";
+      return false;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
-  if (!released)
+  else
   {
-    error = L"OHL did not confirm S/PDIF release. Guitar application not started.";
-    return false;
+    // Legacy direct-ASIO monitor, preserved for users without a guitar bus.
+    if (!SendModeCommand("guitar", response, 1500) || response != "ok")
+    {
+      error = L"The OHL background engine is offline or refused Guitar mode.";
+      return false;
+    }
+    bool released = false;
+    for (int i = 0; i < 80; ++i)
+    {
+      if (SendModeCommand("status", response, 300) && response == "guitar")
+      {
+        released = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!released)
+    {
+      error = L"OHL did not confirm S/PDIF release. Guitar application not started.";
+      return false;
+    }
   }
 
   SHELLEXECUTEINFOW info{};
@@ -117,7 +131,8 @@ bool LaunchGuitarSession(HWND owner, std::wstring& error)
   {
     const DWORD launchError = GetLastError();
     std::string ignored;
-    SendModeCommand("surround", ignored, 1000);
+    if (!unifiedBus)
+      SendModeCommand("surround", ignored, 1000);
     error = L"Could not launch the selected application (Windows error " +
             std::to_wstring(launchError) + L").";
     return false;
@@ -127,10 +142,11 @@ bool LaunchGuitarSession(HWND owner, std::wstring& error)
   {
     const DWORD pid = GetProcessId(info.hProcess);
     CloseHandle(info.hProcess);
-    if (pid)
+    if (pid && !unifiedBus)
     {
       std::string ignored;
-      // Engine owns the session, so closing the switcher does not cancel it.
+      // Legacy exclusive-ASIO mode restores music when the host exits.
+      // Unified mode does not touch optical ownership or monitor process exit.
       SendModeCommand("guitar session " + std::to_string(pid), ignored, 1000);
     }
   }
