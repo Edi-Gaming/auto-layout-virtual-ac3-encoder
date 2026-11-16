@@ -9,6 +9,7 @@
 enum class SurroundTestRoute : int
 {
   Off = 0,
+  Sparkle,
   FL,
   FR,
   C,
@@ -24,6 +25,7 @@ inline const char* SurroundTestRouteName(SurroundTestRoute route)
 {
   switch (route)
   {
+    case SurroundTestRoute::Sparkle: return "sparkle";
     case SurroundTestRoute::FL:     return "fl";
     case SurroundTestRoute::FR:     return "fr";
     case SurroundTestRoute::C:      return "c";
@@ -40,7 +42,8 @@ inline const char* SurroundTestRouteName(SurroundTestRoute route)
 
 inline bool ParseSurroundTestRoute(const std::string& text, SurroundTestRoute& route)
 {
-  if (text == "fl") route = SurroundTestRoute::FL;
+  if (text == "sparkle") route = SurroundTestRoute::Sparkle;
+  else if (text == "fl") route = SurroundTestRoute::FL;
   else if (text == "fr") route = SurroundTestRoute::FR;
   else if (text == "c" || text == "center") route = SurroundTestRoute::C;
   else if (text == "lfe" || text == "sub") route = SurroundTestRoute::LFE;
@@ -59,7 +62,7 @@ struct SurroundTestState
 {
   bool Start(SurroundTestRoute route, int frequencyHz, double levelDb)
   {
-    if (route == SurroundTestRoute::Off ||
+    if (route == SurroundTestRoute::Off || route == SurroundTestRoute::Sparkle ||
         frequencyHz < 20 || frequencyHz > 20000 ||
         !std::isfinite(levelDb) || levelDb < -60.0 || levelDb > -6.0)
       return false;
@@ -71,6 +74,31 @@ struct SurroundTestState
     revision_.fetch_add(1, std::memory_order_acq_rel);
     return true;
   }
+
+  bool StartSparkle(const std::string& texture, int rateHz, int decayMs, double levelDb)
+  {
+    int t = -1;
+    if (texture == "mixed") t = 0;
+    else if (texture == "sine") t = 1;
+    else if (texture == "triangle") t = 2;
+    else if (texture == "metal") t = 3;
+    else if (texture == "noise") t = 4;
+    if (t < 0 || rateHz < 1 || rateHz > 24 || decayMs < 60 || decayMs > 1000 ||
+        !std::isfinite(levelDb) || levelDb < -60.0 || levelDb > -18.0)
+      return false;
+    sparkleTexture_.store(t, std::memory_order_relaxed);
+    sparkleRate_.store(rateHz, std::memory_order_relaxed);
+    sparkleDecayMs_.store(decayMs, std::memory_order_relaxed);
+    levelTenthsDb_.store(static_cast<int>(std::lround(levelDb * 10.0)),
+                         std::memory_order_relaxed);
+    route_.store(static_cast<int>(SurroundTestRoute::Sparkle), std::memory_order_release);
+    revision_.fetch_add(1, std::memory_order_acq_rel);
+    return true;
+  }
+
+  int SparkleTexture() const { return sparkleTexture_.load(std::memory_order_relaxed); }
+  int SparkleRateHz() const { return sparkleRate_.load(std::memory_order_relaxed); }
+  int SparkleDecayMs() const { return sparkleDecayMs_.load(std::memory_order_relaxed); }
 
   void Stop()
   {
@@ -109,7 +137,14 @@ struct SurroundTestState
     if (route == SurroundTestRoute::Off)
       return "test_state=idle";
 
-    char buf[160] = {};
+    char buf[192] = {};
+    if (route == SurroundTestRoute::Sparkle)
+    {
+      std::snprintf(buf, sizeof buf,
+                    "test_state=active;route=sparkle;texture=%d;rate=%d;decay_ms=%d;level_db=%.1f",
+                    SparkleTexture(), SparkleRateHz(), SparkleDecayMs(), LevelDb());
+      return buf;
+    }
     std::snprintf(buf, sizeof buf,
                   "test_state=active;route=%s;frequency_hz=%d;level_db=%.1f",
                   SurroundTestRouteName(route), FrequencyHz(), LevelDb());
@@ -118,6 +153,9 @@ struct SurroundTestState
 
 private:
   std::atomic<int> route_{static_cast<int>(SurroundTestRoute::Off)};
+  std::atomic<int> sparkleTexture_{0};
+  std::atomic<int> sparkleRate_{9};
+  std::atomic<int> sparkleDecayMs_{240};
   std::atomic<int> frequencyHz_{80};
   std::atomic<int> levelTenthsDb_{-300};
   std::atomic<uint64_t> revision_{1};
