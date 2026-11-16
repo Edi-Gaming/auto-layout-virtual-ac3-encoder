@@ -869,23 +869,28 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
         }
       }
 
-      // Never block waiting for the instrument source. Take the newest complete
-      // packet, dropping stale frames so its independently clocked ring never
-      // accumulates a growing backlog. Silence is used on an underrun.
+      // The capture clock can differ slightly from the optical clock.
+      // Keep a bounded jitter margin, discard excess backlog to prevent a
+      // monotonically increasing delay, and never block the output callback.
+      // On an underrun, play the available frames rather than muting an
+      // entire AC-3 packet; zero-pad the missing tail.
       const size_t packetBytes = guitarStaging_.size();
+      const size_t bpf = params_.guitarFormat.bytesPerFrame();
+      const size_t safetyBytes =
+          static_cast<size_t>(params_.guitarSafeFrames) * bpf;
       const size_t available = params_.guitarRing->BytesAvailable();
-      if (available > packetBytes)
+      if (available > packetBytes + safetyBytes)
       {
-        const size_t bpf = params_.guitarFormat.bytesPerFrame();
-        const size_t drop = ((available - packetBytes) / bpf) * bpf;
+        const size_t drop = ((available - packetBytes - safetyBytes) / bpf) * bpf;
         params_.guitarRing->Discard(drop);
       }
-      const uint8_t* guitarPcm = nullptr;
-      if (params_.guitarRing->BytesAvailable() >= packetBytes)
-      {
-        params_.guitarRing->Read(guitarStaging_.data(), packetBytes);
-        guitarPcm = guitarStaging_.data();
-      }
+      const size_t ready = params_.guitarRing->BytesAvailable();
+      const size_t toRead = ((std::min)(ready, packetBytes) / bpf) * bpf;
+      if (toRead)
+        params_.guitarRing->Read(guitarStaging_.data(), toRead);
+      if (toRead < packetBytes)
+        std::memset(guitarStaging_.data() + toRead, 0, packetBytes - toRead);
+      const uint8_t* guitarPcm = toRead ? guitarStaging_.data() : nullptr;
       const GuitarMix::Format guitarFormat{
           params_.guitarFormat.channels, params_.guitarFormat.bits,
           params_.guitarFormat.isFloat};
