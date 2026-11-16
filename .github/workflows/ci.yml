@@ -27,6 +27,17 @@ jobs:
             $errors | ForEach-Object { Write-Error ($_.Message + ' at ' + $_.Extent.StartLineNumber + ':' + $_.Extent.StartColumnNumber) }
             throw "PowerShell installer has $($errors.Count) parser error(s)."
           }
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/configure-concurrent-guitar.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error ($_.Message + ' at ' + $_.Extent.StartLineNumber + ':' + $_.Extent.StartColumnNumber) }
+            throw "Concurrent guitar setup has $($errors.Count) parser error(s)."
+          }
 
       # FFmpeg shared dev libs are not committed; cache them across runs.
       - name: Cache FFmpeg dev libs
@@ -71,6 +82,9 @@ jobs:
           Copy-Item scripts/install-day-to-day.ps1 dist-test/
           Copy-Item scripts/install-day-to-day.cmd dist-test/INSTALL-DAY-TO-DAY.cmd
           Copy-Item CONCURRENT-GUITAR-SETUP.txt dist-test/
+          Copy-Item scripts/configure-concurrent-guitar.ps1 dist-test/
+          Copy-Item scripts/enable-concurrent-guitar.cmd dist-test/ENABLE-CONCURRENT-GUITAR.cmd
+          Copy-Item scripts/disable-concurrent-guitar.cmd dist-test/DISABLE-CONCURRENT-GUITAR.cmd
 
       - name: Upload test build
         uses: actions/upload-artifact@v4
