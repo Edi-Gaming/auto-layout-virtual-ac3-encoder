@@ -227,10 +227,57 @@ engine\build\Release\engine.exe --in "CABLE Output" --out "Realtek Digital Outpu
 Set the virtual device as the Windows default 5.1 output, play surround content, and switch the
 receiver to the matching optical input — it should report Dolby Digital.
 
-### Low-latency guitar mode
+### Concurrent guitar + surround mix (experimental)
 
-Live guitar monitoring should not be routed through the AC3 path: one AC3 frame is 1536 samples,
-which is already 32 ms at 48 kHz before DAW/plugin, virtual-cable, receiver, and other buffering.
+**OHL now supports two simultaneous inputs in one optical output.** Set
+`guitar_in=CABLE Output` (or `guitar_in_id=<endpoint-id>`) to activate a second
+independent WASAPI capture thread and PCM ring. OHL captures system audio
+separately, preserves the existing OHL Music 5.1 spatializer, places the
+processed guitar signal into the front channels **after** spatialization, peak-limits
+the resulting six channels, and encodes one constant 5.1 Dolby Digital stream.
+The guitar source is excluded from OHL's rear ambience synthesis; music and
+guitar have independent capture clocks with stale guitar packets discarded.
+
+**Working with only one VB-CABLE:** Route normal Windows audio to your Realtek
+`Speakers` endpoint and configure OHL to loopback-capture that *render* endpoint.
+Route AmpliTube's ASIO4ALL output to `CABLE Input` and configure OHL's second
+capture to read `CABLE Output`. OHL must exclusively own Realtek **S/PDIF**;
+ASIO4ALL must not open that optical output. Set both endpoints to 48 kHz.
+
+Edit the installed `virtual-ac3-encoder.conf` (preserve your optical `out` settings):
+
+```ini
+in=Speakers
+in_id=
+loopback=true
+guitar_in=CABLE Output
+guitar_in_id=
+guitar_loopback=false
+guitar_gain=0.50
+layout=auto
+stereo_processing=music
+```
+
+After editing: `engine.exe --mode reload`; verify with
+`engine.exe --mode "guitar bus"` (expects `active`). With this bus active, the
+existing **Play Guitar (ASIO)** shortcut starts your chosen app **without
+disabling surround**. The manual Guitar mode still releases S/PDIF for direct
+ASIO monitoring when you need it.
+
+See the packaged **CONCURRENT-GUITAR-SETUP.txt** for the full routing, format
+constraints, ASIO4ALL settings, and troubleshooting.
+
+**Latency caveat:** This enables *simultaneous* playback, not single-digit-
+millisecond monitoring. Dolby Digital encodes 1536 samples per frame (32 ms at
+48 kHz) before Windows and receiver overhead. Low-latency simultaneous 5.1
+monitoring would require a non-AC-3 output backend, such as multichannel
+analog PCM, and suitable hardware. Hardware validation on Realtek/ASIO4ALL/
+VB-CABLE/STR-K900 remains outstanding.
+
+### Legacy direct-ASIO guitar mode
+
+For lowest available latency through the current optical receiver, the existing
+Guitar mode releases S/PDIF entirely so ASIO4ALL can monitor stereo PCM.
 
 The engine therefore has a persistent runtime mode switcher:
 
@@ -264,9 +311,10 @@ a pinnable **Play Guitar (ASIO)** Start Menu shortcut.
 The first launch prompts for the guitar application's executable (e.g. AmpliTube). OHL
 saves that path per-user, independently of ASIO4ALL's per-host device configuration.
 
-A single click requests GUITAR mode, waits until the engine confirms it has destroyed
-its exclusive WASAPI render objects and released S/PDIF, launches the chosen ASIO host,
-and tracks that launched process to restore SURROUND after it exits.
+**When the concurrent guitar bus is enabled**, a click launches the selected ASIO host
+while leaving OHL Music and the AC-3 output active. It does not switch modes.
+**Otherwise**, the legacy shortcut requests GUITAR mode, waits until the engine releases
+S/PDIF, launches the host and tracks its process to restore SURROUND on exit.
 
 The console accepts --launch-guitar; the native UI accepts --guitar-launch.
 Use **Change Guitar App...** to change the executable. The existing **Guitar**
