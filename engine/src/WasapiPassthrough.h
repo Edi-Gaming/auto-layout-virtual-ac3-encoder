@@ -90,6 +90,7 @@ public:
     RingBuffer* guitarRing = nullptr;
     CaptureFormat guitarFormat{};
     float guitarGain = 0.5f;
+    uint32_t guitarSafeFrames = 480;
   };
 
   WasapiPassthrough() = default;
