@@ -19,6 +19,16 @@ You do NOT need a second VB-CABLE for the two independent sources in this
 specific arrangement. You MUST NOT route Windows music to CABLE Input because
 that cable is reserved for the guitar source.
 
+QUICK SETUP: First install/update OHL using INSTALL-DAY-TO-DAY.cmd, then
+double-click ENABLE-CONCURRENT-GUITAR.cmd in this extracted folder. The script
+backs up your existing configuration, validates device names, changes only the
+audio input keys, and requests a live reload. Double-click
+DISABLE-CONCURRENT-GUITAR.cmd to restore the original routing from backup.
+If your Speakers endpoint uses another name, run the underlying PowerShell
+script with -MusicEndpoint 'name' instead.
+
+MANUAL SETUP (the quick setup does these config changes for you)
+---------------------------------------------------------------
 1. Set Windows default audio output to Speakers (Realtek). Use that endpoint
    for YouTube etc. It need not be physically connected to speakers.
 2. Open the installed virtual-ac3-encoder.conf. Keep your out/out_id/out_spdif
