@@ -22,6 +22,7 @@
 #include "MusicCaptureLogger.h"
 #include "SurroundTestState.h"
 #include "SparkleField.h"
+#include "GuitarMix.h"
 #include "WasapiCapture.h" // CaptureFormat
 
 #include <audioclient.h>
@@ -85,6 +86,10 @@ public:
     MusicTelemetry* musicTelemetry = nullptr;
     MusicCaptureLogger* musicCaptureLogger = nullptr;
     SurroundTestState* surroundTestState = nullptr;
+    // Optional independent guitar bus: PCM captured via another WASAPI endpoint.
+    RingBuffer* guitarRing = nullptr;
+    CaptureFormat guitarFormat{};
+    float guitarGain = 0.5f;
   };
 
   WasapiPassthrough() = default;
@@ -139,6 +144,7 @@ private:
   SpdifEncoder   encStereo_;
   SpdifEncoder   encMusic51_;
   SpdifEncoder   encTest51_;
+  SpdifEncoder   encGuitar51_;
   OhlMusicUpmixer musicUpmixer_;
   int            framesPerPacket_ = 1536;
   static constexpr int kBurstBytes = SpdifEncoder::kMaxBytesPerPacket; // 6144
@@ -177,6 +183,13 @@ private:
   double testFrequencyHz_ = 80.0;
   double testAmplitude_ = 0.0316227766; // -30 dBFS
   OhlSparkleField sparkleField_;
+
+  // Guitar-only input uses a separate SPSC ring and an independent clock.
+  // Output consumes the freshest complete packet; no locks or allocations
+  // are performed on the S/PDIF render callback.
+  float guitarLimiterGain_ = 1.0f;
+  std::vector<uint8_t> guitarStaging_;
+  std::vector<float> guitarMixed51_;
 
   std::vector<uint8_t> staging_; // one packet of capture frames
   std::vector<uint8_t> silence_; // same, zeroed
