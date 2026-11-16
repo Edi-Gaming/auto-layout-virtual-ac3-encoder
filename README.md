@@ -244,7 +244,15 @@ Route AmpliTube's ASIO4ALL output to `CABLE Input` and configure OHL's second
 capture to read `CABLE Output`. OHL must exclusively own Realtek **S/PDIF**;
 ASIO4ALL must not open that optical output. Set both endpoints to 48 kHz.
 
-Edit the installed `virtual-ac3-encoder.conf` (preserve your optical `out` settings):
+**One-click setup:** After running `INSTALL-DAY-TO-DAY.cmd`, run
+`ENABLE-CONCURRENT-GUITAR.cmd` from the extracted build folder. It checks that
+the device names exist, backs up your original config, configures the two input
+paths, and reloads the engine. `DISABLE-CONCURRENT-GUITAR.cmd` restores that
+backup. Then set Windows default sound to Speakers and configure AmpliTube as
+described below.
+
+Or edit the installed `virtual-ac3-encoder.conf` manually (preserve your
+optical `out` settings):
 
 ```ini
 in=Speakers
