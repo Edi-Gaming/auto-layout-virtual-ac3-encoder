@@ -25,6 +25,7 @@ constexpr int kIdSubtitle = 1006;
 constexpr int kIdMusicSettings = 1007;
 constexpr int kIdGuitarLaunch = 1008;
 constexpr int kIdGuitarChoose = 1009;
+constexpr int kIdSurroundWizard = 1010;
 
 HBRUSH gBackgroundBrush = nullptr;
 HFONT gTitleFont = nullptr;
@@ -93,6 +94,12 @@ void LaunchMusicSettings()
 {
   const std::wstring exe = UiLauncherPath();
   ShellExecuteW(nullptr, L"open", exe.c_str(), L"--music-settings", nullptr, SW_SHOWNORMAL);
+}
+
+void LaunchSurroundWizard()
+{
+  const std::wstring exe = UiLauncherPath();
+  ShellExecuteW(nullptr, L"open", exe.c_str(), L"--surround-wizard", nullptr, SW_SHOWNORMAL);
 }
 
 void LaunchGuitarFromSwitcher(HWND hwnd)
@@ -189,13 +196,20 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                  hwnd, reinterpret_cast<HMENU>(kIdMusicSettings), nullptr, nullptr);
       SendMessageW(music, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
+      HWND wizard = CreateWindowW(L"BUTTON",
+                                  L"SURROUND WIZARD  /  SPARKLE FIELD...",
+                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  22, 364, 520, 42,
+                                  hwnd, reinterpret_cast<HMENU>(kIdSurroundWizard), nullptr, nullptr);
+      SendMessageW(wizard, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+
       HWND hint = CreateWindowW(
           L"STATIC",
           L"PLAY GUITAR releases optical before launching your chosen ASIO host. "
           L"OHL restores Surround when the launched process closes. "
           L"ASIO4ALL settings remain per application.",
           WS_CHILD | WS_VISIBLE,
-          22, 365, 520, 64,
+          22, 422, 520, 64,
           hwnd, reinterpret_cast<HMENU>(kIdHint), nullptr, nullptr);
       SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
@@ -223,6 +237,7 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case kIdSurround:      RequestMode(hwnd, "surround"); return 0;
         case kIdGuitar:        RequestMode(hwnd, "guitar");   return 0;
         case kIdMusicSettings: LaunchMusicSettings();          return 0;
+        case kIdSurroundWizard: LaunchSurroundWizard();        return 0;
         case kIdGuitarLaunch: LaunchGuitarFromSwitcher(hwnd);  return 0;
         case kIdGuitarChoose:
         {
@@ -644,7 +659,7 @@ int RunModeSwitcherGui()
       CW_USEDEFAULT,
       CW_USEDEFAULT,
       580,
-      485,
+      540,
       nullptr,
       nullptr,
       instance,
