@@ -21,6 +21,7 @@ constexpr UINT kMenuSwitcher = 2003;
 constexpr UINT kMenuLog = 2004;
 constexpr UINT kMenuExit = 2005;
 constexpr UINT kMenuMusicSettings = 2006;
+constexpr UINT kMenuGuitarLaunch = 2007;
 
 std::wstring UiLauncherPath()
 {
@@ -253,6 +254,7 @@ void TrayIcon::ShowContextMenu()
 
   AppendMenuW(menu, surroundFlags, kMenuSurround, L"Surround mode");
   AppendMenuW(menu, guitarFlags, kMenuGuitar, L"Guitar / low-latency mode");
+  AppendMenuW(menu, MF_STRING, kMenuGuitarLaunch, L"Play guitar / launch ASIO app...");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING | MF_DEFAULT, kMenuSwitcher, L"Open mode switcher...");
   AppendMenuW(menu, MF_STRING, kMenuMusicSettings, L"OHL Music settings...");
@@ -299,6 +301,12 @@ void TrayIcon::ShowContextMenu()
     case kMenuGuitar:
       if (desired_) desired_->store(RuntimeAudioMode::Guitar);
       break;
+    case kMenuGuitarLaunch:
+    {
+      const std::wstring exe = UiLauncherPath();
+      ShellExecuteW(nullptr, L"open", exe.c_str(), L"--guitar-launch", nullptr, SW_SHOWNORMAL);
+      break;
+    }
     case kMenuSwitcher:
       LaunchSwitcher();
       break;
