@@ -487,6 +487,28 @@ void ModeControlServer::ThreadProc()
           }
         }
       }
+      else if (command.rfind("test sparkle ", 0) == 0)
+      {
+        if (!surroundTestState_)
+          response = "test_state=error;error=test_generator_unavailable";
+        else if (!current_ || current_->load() != RuntimeAudioMode::Surround)
+          response = "test_state=error;error=surround_not_active";
+        else
+        {
+          std::istringstream in(command.substr(sizeof("test sparkle ") - 1));
+          std::string texture, extra;
+          int rate = 0, decay = 0;
+          double level = 0.0;
+          if (!(in >> texture >> rate >> decay >> level) || (in >> extra) ||
+              !surroundTestState_->StartSparkle(texture, rate, decay, level))
+            response = "test_state=error;error=invalid_sparkle_parameters";
+          else
+          {
+            if (musicCaptureLogger_) musicCaptureLogger_->Cancel();
+            response = surroundTestState_->ToCompactString();
+          }
+        }
+      }
       else if (command == "test stop")
       {
         if (surroundTestState_)
