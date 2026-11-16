@@ -22,6 +22,7 @@ constexpr UINT kMenuLog = 2004;
 constexpr UINT kMenuExit = 2005;
 constexpr UINT kMenuMusicSettings = 2006;
 constexpr UINT kMenuGuitarLaunch = 2007;
+constexpr UINT kMenuSurroundWizard = 2008;
 
 std::wstring UiLauncherPath()
 {
@@ -258,6 +259,7 @@ void TrayIcon::ShowContextMenu()
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
   AppendMenuW(menu, MF_STRING | MF_DEFAULT, kMenuSwitcher, L"Open mode switcher...");
   AppendMenuW(menu, MF_STRING, kMenuMusicSettings, L"OHL Music settings...");
+  AppendMenuW(menu, MF_STRING, kMenuSurroundWizard, L"Surround Wizard / Sparkle Field...");
   AppendMenuW(menu, logPath_.empty() ? (MF_STRING | MF_GRAYED) : MF_STRING,
               kMenuLog, L"Open engine log");
 
@@ -310,6 +312,12 @@ void TrayIcon::ShowContextMenu()
     case kMenuSwitcher:
       LaunchSwitcher();
       break;
+    case kMenuSurroundWizard:
+    {
+      const std::wstring exe = UiLauncherPath();
+      ShellExecuteW(nullptr, L"open", exe.c_str(), L"--surround-wizard", nullptr, SW_SHOWNORMAL);
+      break;
+    }
     case kMenuMusicSettings:
       LaunchMusicSettings();
       break;
