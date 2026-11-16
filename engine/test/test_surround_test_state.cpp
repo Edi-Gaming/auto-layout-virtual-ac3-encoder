@@ -23,6 +23,16 @@ TEST_CASE("Surround Wizard state validates requests and reports compact status")
   CHECK_FALSE(state.Start(SurroundTestRoute::Off, 80, -30.0));
   CHECK_FALSE(state.Start(SurroundTestRoute::LFE, 10, -30.0));
   CHECK_FALSE(state.Start(SurroundTestRoute::LFE, 80, -3.0));
+  CHECK_FALSE(state.Start(SurroundTestRoute::Sparkle, 80, -30.0));
+  CHECK(state.StartSparkle("metal", 9, 240, -30.0));
+  CHECK(state.Route() == SurroundTestRoute::Sparkle);
+  CHECK(state.SparkleTexture() == 3);
+  CHECK(state.ToCompactString().find("rate=9") != std::string::npos);
+  state.Stop();
+  CHECK_FALSE(state.Active());
+  CHECK_FALSE(state.StartSparkle("invalid", 9, 240, -30.0));
+  CHECK_FALSE(state.StartSparkle("sine", 99, 240, -30.0));
+  CHECK_FALSE(state.StartSparkle("sine", 9, 240, -6.0));
 }
 
 TEST_CASE("Surround Wizard route parser covers discrete and combined routes")
