@@ -1,5 +1,6 @@
 #include "ModeControl.h"
 #include "BrandIcon.h"
+#include "GuitarWorkflow.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -22,6 +23,8 @@ constexpr int kIdHint = 1004;
 constexpr int kIdTitle = 1005;
 constexpr int kIdSubtitle = 1006;
 constexpr int kIdMusicSettings = 1007;
+constexpr int kIdGuitarLaunch = 1008;
+constexpr int kIdGuitarChoose = 1009;
 
 HBRUSH gBackgroundBrush = nullptr;
 HFONT gTitleFont = nullptr;
@@ -92,6 +95,14 @@ void LaunchMusicSettings()
   ShellExecuteW(nullptr, L"open", exe.c_str(), L"--music-settings", nullptr, SW_SHOWNORMAL);
 }
 
+void LaunchGuitarFromSwitcher(HWND hwnd)
+{
+  std::wstring error;
+  if (!LaunchGuitarSession(hwnd, error) && error != L"Selection cancelled.")
+    MessageBoxW(hwnd, error.c_str(), L"OHL Guitar Session", MB_OK | MB_ICONERROR);
+  RefreshStatus(hwnd);
+}
+
 void RequestMode(HWND hwnd, const char* mode)
 {
   std::string response;
@@ -151,25 +162,40 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       SendMessageW(surround, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
 
       HWND guitar = CreateWindowW(L"BUTTON",
-                                  L"GUITAR\r\nASIO4ALL  >  direct S/PDIF",
+                                  L"GUITAR\r\nRELEASE S/PDIF ONLY",
                                   WS_CHILD | WS_VISIBLE | BS_MULTILINE | BS_PUSHBUTTON,
                                   292, 146, 250, 82,
                                   hwnd, reinterpret_cast<HMENU>(kIdGuitar), nullptr, nullptr);
       SendMessageW(guitar, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
 
+      HWND launch = CreateWindowW(L"BUTTON",
+                                  L"PLAY GUITAR  /  OPEN ASIO APP",
+                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  22, 246, 520, 46,
+                                  hwnd, reinterpret_cast<HMENU>(kIdGuitarLaunch), nullptr, nullptr);
+      SendMessageW(launch, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
+
+      HWND choose = CreateWindowW(L"BUTTON",
+                                  L"CHANGE GUITAR APP...",
+                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                                  22, 307, 250, 42,
+                                  hwnd, reinterpret_cast<HMENU>(kIdGuitarChoose), nullptr, nullptr);
+      SendMessageW(choose, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
+
       HWND music = CreateWindowW(L"BUTTON",
                                  L"OHL MUSIC SETTINGS...",
                                  WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                                 22, 246, 520, 42,
+                                 292, 307, 250, 42,
                                  hwnd, reinterpret_cast<HMENU>(kIdMusicSettings), nullptr, nullptr);
-      SendMessageW(music, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
+      SendMessageW(music, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
       HWND hint = CreateWindowW(
           L"STATIC",
-          L"Surround owns optical for AC-3. Guitar releases S/PDIF for ASIO4ALL; "
-          L"OHL Music settings apply live to the stereo spatializer.",
+          L"PLAY GUITAR releases optical before launching your chosen ASIO host. "
+          L"OHL restores Surround when the launched process closes. "
+          L"ASIO4ALL settings remain per application.",
           WS_CHILD | WS_VISIBLE,
-          22, 304, 520, 48,
+          22, 365, 520, 64,
           hwnd, reinterpret_cast<HMENU>(kIdHint), nullptr, nullptr);
       SendMessageW(hint, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
@@ -197,6 +223,14 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case kIdSurround:      RequestMode(hwnd, "surround"); return 0;
         case kIdGuitar:        RequestMode(hwnd, "guitar");   return 0;
         case kIdMusicSettings: LaunchMusicSettings();          return 0;
+        case kIdGuitarLaunch: LaunchGuitarFromSwitcher(hwnd);  return 0;
+        case kIdGuitarChoose:
+        {
+          std::wstring error;
+          if (!ChooseGuitarHost(hwnd, error) && error != L"Selection cancelled.")
+            MessageBoxW(hwnd, error.c_str(), L"OHL Guitar Session", MB_OK | MB_ICONERROR);
+          return 0;
+        }
       }
       break;
 
@@ -286,7 +320,8 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
                               std::atomic_bool* reloadConfig,
                               MusicTelemetry* musicTelemetry,
                               MusicCaptureLogger* musicCaptureLogger,
-                              SurroundTestState* surroundTestState)
+                              SurroundTestState* surroundTestState,
+                              std::atomic<uint32_t>* guitarSessionPid)
 {
   if (thread_.joinable())
     return true;
@@ -299,6 +334,7 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
   musicTelemetry_ = musicTelemetry;
   musicCaptureLogger_ = musicCaptureLogger;
   surroundTestState_ = surroundTestState;
+  guitarSessionPid_ = guitarSessionPid;
   stop_.store(false);
 
   try
@@ -365,13 +401,38 @@ void ModeControlServer::ThreadProc()
 
       if (command == "surround")
       {
+        if (guitarSessionPid_) guitarSessionPid_->store(0);
         desired_->store(RuntimeAudioMode::Surround);
         response = "ok";
       }
       else if (command == "guitar")
       {
+        if (guitarSessionPid_) guitarSessionPid_->store(0);
         desired_->store(RuntimeAudioMode::Guitar);
         response = "ok";
+      }
+      else if (command.rfind("guitar session ", 0) == 0)
+      {
+        std::istringstream in(command.substr(sizeof("guitar session ") - 1));
+        uint64_t pid = 0;
+        std::string extra;
+        if (!(in >> pid) || (in >> extra) || pid == 0 || pid > 0xFFFFFFFFULL ||
+            !guitarSessionPid_ || desired_->load() != RuntimeAudioMode::Guitar)
+        {
+          response = "error:invalid session";
+        }
+        else
+        {
+          HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
+          if (!process)
+            response = "error:process not accessible";
+          else
+          {
+            CloseHandle(process);
+            guitarSessionPid_->store(static_cast<uint32_t>(pid));
+            response = "ok";
+          }
+        }
       }
       else if (command == "reload")
       {
@@ -561,7 +622,7 @@ int RunModeSwitcherGui()
       CW_USEDEFAULT,
       CW_USEDEFAULT,
       580,
-      405,
+      485,
       nullptr,
       nullptr,
       instance,
