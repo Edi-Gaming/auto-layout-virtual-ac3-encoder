@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -37,7 +38,8 @@ public:
              std::atomic_bool* reloadConfig,
              MusicTelemetry* musicTelemetry,
              MusicCaptureLogger* musicCaptureLogger,
-             SurroundTestState* surroundTestState);
+             SurroundTestState* surroundTestState,
+             std::atomic<uint32_t>* guitarSessionPid);
   void Stop();
 
 private:
@@ -51,6 +53,7 @@ private:
   MusicTelemetry* musicTelemetry_ = nullptr;
   MusicCaptureLogger* musicCaptureLogger_ = nullptr;
   SurroundTestState* surroundTestState_ = nullptr;
+  std::atomic<uint32_t>* guitarSessionPid_ = nullptr;
 
   std::atomic_bool stop_{false};
   std::thread thread_;
