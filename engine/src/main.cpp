@@ -122,6 +122,8 @@ static void LoadConfigFile(const std::string& path, Config& c)
     else if (k == "guitar_in_id")       c.guitarInId = Widen(v.c_str());
     else if (k == "guitar_loopback")    c.guitarLoopback = truthy(v);
     else if (k == "guitar_gain")        c.guitarGain = std::strtod(v.c_str(), nullptr);
+    else if (k == "guitar_safe_frames") c.guitarSafeFrames =
+        static_cast<uint32_t>(std::strtoul(v.c_str(), nullptr, 10));
     else if (k == "out")               c.outName = Widen(v.c_str());
     else if (k == "out_id")            c.outId = Widen(v.c_str());
     else if (k == "bitrate")           c.bitRate = std::strtoll(v.c_str(), nullptr, 10);
@@ -204,6 +206,8 @@ static void ParseArgs(int argc, char** argv, Config& c)
     else if (a == "--guitar-loopback") c.guitarLoopback = true;
     else if (a == "--guitar-gain" && i + 1 < argc)
       c.guitarGain = std::strtod(argv[++i], nullptr);
+    else if (a == "--guitar-safe-frames" && i + 1 < argc)
+      c.guitarSafeFrames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     else if (a == "--out")        c.outName = next();
     else if (a == "--out-id")     c.outId = next();
     else if (a == "--out-spdif")  c.outAutoSpdif = true;
@@ -270,6 +274,11 @@ static void ParseArgs(int argc, char** argv, Config& c)
 
 static bool ValidateConfig(const Config& cfg)
 {
+  if (cfg.guitarSafeFrames > 1536)
+  {
+    std::fprintf(stderr, "invalid guitar_safe_frames; expected 0..1536\n");
+    return false;
+  }
   if (!std::isfinite(cfg.guitarGain) || cfg.guitarGain < 0.0 || cfg.guitarGain > 2.0)
   {
     std::fprintf(stderr, "invalid guitar_gain; expected 0..2\n");
@@ -669,6 +678,7 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(
   pp.guitarRing = p->guitarRing.get();
   pp.guitarFormat = guitarFmt;
   pp.guitarGain = static_cast<float>(cfg.guitarGain);
+  pp.guitarSafeFrames = cfg.guitarSafeFrames;
 
   std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
   if (pp.autoLayout)
