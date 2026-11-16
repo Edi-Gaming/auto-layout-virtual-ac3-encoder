@@ -152,6 +152,28 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
     }
   }
 
+  if (params_.guitarRing)
+  {
+    // The output stream remains exclusive AC-3, but now it always has room for
+    // both fully spatialized music and independent front stereo guitar.
+    SpdifEncoder::Params gp;
+    gp.sampleRate = rate;
+    gp.bitRate = params_.bitRate;
+    gp.inSampleFmt = AV_SAMPLE_FMT_FLT;
+    gp.upmix = SpdifEncoder::Upmix::Off;
+    gp.outputLayout = SpdifEncoder::OutputLayout::Surround51;
+    AVChannelLayout layout51 = AV_CHANNEL_LAYOUT_5POINT1_BACK;
+    av_channel_layout_copy(&gp.inLayout, &layout51);
+    encOk = encGuitar51_.Init(gp);
+    av_channel_layout_uninit(&gp.inLayout);
+    if (!encOk || encGuitar51_.FramesPerPacket() != framesPerPacket_)
+    {
+      std::fprintf(stderr, "[GuitarBus] could not initialize mixed AC-3 encoder\n");
+      av_channel_layout_uninit(&ep.inLayout);
+      return false;
+    }
+  }
+
   if (params_.autoLayout)
   {
     if (params_.musicStereo)
@@ -300,6 +322,12 @@ bool WasapiPassthrough::Init(IMMDevice* dev, RingBuffer* ring, const CaptureForm
   silence_.assign(pktBytes, 0);
   burst_.resize(kBurstBytes);
   test51_.resize(static_cast<size_t>(framesPerPacket_) * 6);
+  if (params_.guitarRing)
+  {
+    guitarStaging_.resize(static_cast<size_t>(framesPerPacket_) *
+                          params_.guitarFormat.bytesPerFrame());
+    guitarMixed51_.resize(static_cast<size_t>(framesPerPacket_) * 6);
+  }
   testFadeSamples_ = std::max(1, rate / 100); // 10 ms click-safe route crossfade
   if (params_.autoLayout && params_.musicStereo)
   {
@@ -813,6 +841,61 @@ void WasapiPassthrough::EncodeIntoBuffer(BYTE* out)
       }
     }
 
+    if (!testOverride && params_.guitarRing)
+    {
+      // Preserve OHL Music's spatialization, then inject processed guitar into
+      // FL/FR without feeding it through the spectral surround algorithm.
+      std::fill(guitarMixed51_.begin(), guitarMixed51_.end(), 0.0f);
+      if (enc == &encMusic51_)
+      {
+        std::memcpy(guitarMixed51_.data(), music51_.data(),
+                    guitarMixed51_.size() * sizeof(float));
+      }
+      else
+      {
+        const GuitarMix::Format musicFormat{
+            capFmt_.channels, capFmt_.bits, capFmt_.isFloat};
+        const unsigned copyChannels =
+            (enc == &enc51_ && capFmt_.channels >= 6) ? 6u : 2u;
+        for (int frame = 0; frame < framesPerPacket_; ++frame)
+        {
+          const size_t base = static_cast<size_t>(frame) * 6;
+          for (unsigned ch = 0; ch < copyChannels; ++ch)
+          {
+            const unsigned src = ch < capFmt_.channels ? ch : 0u;
+            guitarMixed51_[base + ch] =
+                GuitarMix::Sample(in, static_cast<size_t>(frame), src, musicFormat);
+          }
+        }
+      }
+
+      // Never block waiting for the instrument source. Take the newest complete
+      // packet, dropping stale frames so its independently clocked ring never
+      // accumulates a growing backlog. Silence is used on an underrun.
+      const size_t packetBytes = guitarStaging_.size();
+      const size_t available = params_.guitarRing->BytesAvailable();
+      if (available > packetBytes)
+      {
+        const size_t bpf = params_.guitarFormat.bytesPerFrame();
+        const size_t drop = ((available - packetBytes) / bpf) * bpf;
+        params_.guitarRing->Discard(drop);
+      }
+      const uint8_t* guitarPcm = nullptr;
+      if (params_.guitarRing->BytesAvailable() >= packetBytes)
+      {
+        params_.guitarRing->Read(guitarStaging_.data(), packetBytes);
+        guitarPcm = guitarStaging_.data();
+      }
+      const GuitarMix::Format guitarFormat{
+          params_.guitarFormat.channels, params_.guitarFormat.bits,
+          params_.guitarFormat.isFloat};
+      GuitarMix::AddTo51(guitarMixed51_.data(),
+          static_cast<size_t>(framesPerPacket_),
+          guitarPcm, guitarFormat, params_.guitarGain, guitarLimiterGain_);
+      enc = &encGuitar51_;
+      encodeIn = reinterpret_cast<const uint8_t*>(guitarMixed51_.data());
+    }
+
     int n = enc->EncodePacket(encodeIn, burst_.data(), static_cast<int>(burst_.size()));
     if (n <= 0)
     {
@@ -846,6 +929,7 @@ bool WasapiPassthrough::Start()
   testFadePos_ = testFadeSamples_;
   testPhase_ = 0.0;
   sparkleField_.Reset();
+  guitarLimiterGain_ = 1.0f;
   if (params_.autoLayout && params_.musicStereo)
     musicUpmixer_.Reset();
 
