@@ -96,6 +96,19 @@ void RefreshStatus(HWND hwnd)
       response = "surround+guitar";
   }
   SetStatus(hwnd, response);
+  HWND hint = GetDlgItem(hwnd, kIdHint);
+  if (hint)
+  {
+    if (response == "surround+guitar")
+      SetWindowTextW(hint,
+          L"UNIFIED MIXER: Windows music and AmpliTube run simultaneously. "
+          L"Guitar enters FL/FR after surround processing. "
+          L"Keep ASIO4ALL output on VB-CABLE, not S/PDIF.");
+    else
+      SetWindowTextW(hint,
+          L"Without a configured guitar bus, PLAY GUITAR switches to direct ASIO. "
+          L"Run ENABLE-CONCURRENT-GUITAR.cmd to mix guitar and surround instead.");
+  }
 }
 
 void LaunchMusicSettings()
@@ -150,7 +163,7 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
-      HWND title = CreateWindowW(L"STATIC", L"OHL  |  AUDIO MODE",
+      HWND title = CreateWindowW(L"STATIC", L"OHL  |  AUDIO ROUTER",
                                  WS_CHILD | WS_VISIBLE,
                                  22, 17, 520, 34,
                                  hwnd, reinterpret_cast<HMENU>(kIdTitle), nullptr, nullptr);
@@ -170,14 +183,14 @@ LRESULT CALLBACK SwitcherWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       SendMessageW(status, WM_SETFONT, reinterpret_cast<WPARAM>(gUiFont), TRUE);
 
       HWND surround = CreateWindowW(L"BUTTON",
-                                    L"SURROUND\r\nVB-CABLE  >  AC-3  >  S/PDIF",
+                                    L"OHL MIXER\r\nMUSIC + GUITAR  >  S/PDIF",
                                     WS_CHILD | WS_VISIBLE | BS_MULTILINE | BS_PUSHBUTTON,
                                     22, 146, 250, 82,
                                     hwnd, reinterpret_cast<HMENU>(kIdSurround), nullptr, nullptr);
       SendMessageW(surround, WM_SETFONT, reinterpret_cast<WPARAM>(gButtonFont), TRUE);
 
       HWND guitar = CreateWindowW(L"BUTTON",
-                                  L"GUITAR\r\nRELEASE S/PDIF ONLY",
+                                  L"DIRECT ASIO\r\nSTOP OHL OUTPUT",
                                   WS_CHILD | WS_VISIBLE | BS_MULTILINE | BS_PUSHBUTTON,
                                   292, 146, 250, 82,
                                   hwnd, reinterpret_cast<HMENU>(kIdGuitar), nullptr, nullptr);
