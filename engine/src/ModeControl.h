@@ -39,7 +39,8 @@ public:
              MusicTelemetry* musicTelemetry,
              MusicCaptureLogger* musicCaptureLogger,
              SurroundTestState* surroundTestState,
-             std::atomic<uint32_t>* guitarSessionPid);
+             std::atomic<uint32_t>* guitarSessionPid,
+             std::atomic_bool* guitarBusActive);
   void Stop();
 
 private:
@@ -54,6 +55,7 @@ private:
   MusicCaptureLogger* musicCaptureLogger_ = nullptr;
   SurroundTestState* surroundTestState_ = nullptr;
   std::atomic<uint32_t>* guitarSessionPid_ = nullptr;
+  std::atomic_bool* guitarBusActive_ = nullptr;
 
   std::atomic_bool stop_{false};
   std::thread thread_;
