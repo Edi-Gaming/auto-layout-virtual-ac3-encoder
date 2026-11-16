@@ -1,0 +1,97 @@
+OHL CONCURRENT GUITAR + SURROUND (EXPERIMENTAL)
+=================================================
+
+This build can mix two independent PCM sources into ONE 5.1 Dolby Digital
+optical stream. Unlike legacy GUITAR mode, OHL keeps the receiver locked on
+AC-3 while you play guitar and a Windows video/music source simultaneously.
+
+ONE-VB-CABLE ROUTING (if your PC exposes Realtek Speakers)
+-----------------------------------------------------------
+Source 1: Windows / YouTube -> Realtek Speakers shared WASAPI endpoint
+         -> OHL captures that endpoint with WASAPI loopback.
+Source 2: Guitar -> Realtek line/mic input -> AmpliTube with ASIO4ALL
+         -> ASIO4ALL's VB-CABLE playback output ("CABLE Input")
+         -> VB-CABLE recording endpoint ("CABLE Output")
+         -> OHL's separate guitar WASAPI capture thread.
+Output:   OHL final 5.1 mix -> AC-3 -> Realtek S/PDIF -> Sony receiver.
+
+You do NOT need a second VB-CABLE for the two independent sources in this
+specific arrangement. You MUST NOT route Windows music to CABLE Input because
+that cable is reserved for the guitar source.
+
+QUICK SETUP: First install/update OHL using INSTALL-DAY-TO-DAY.cmd, then
+double-click ENABLE-CONCURRENT-GUITAR.cmd in this extracted folder. The script
+backs up your existing configuration, validates device names, changes only the
+audio input keys, and requests a live reload. Double-click
+DISABLE-CONCURRENT-GUITAR.cmd to restore the original routing from backup.
+If your Speakers endpoint uses another name, run the underlying PowerShell
+script with -MusicEndpoint 'name' instead.
+
+MANUAL SETUP (the quick setup does these config changes for you)
+---------------------------------------------------------------
+1. Set Windows default audio output to Speakers (Realtek). Use that endpoint
+   for YouTube etc. It need not be physically connected to speakers.
+2. Open the installed virtual-ac3-encoder.conf. Keep your out/out_id/out_spdif
+   settings for the optical receiver unchanged. Ensure in_id is empty.
+3. Add or update these exact keys (in must match YOUR speakers' friendly name):
+
+    in=Speakers
+    in_id=
+    loopback=true
+    guitar_in=CABLE Output
+    guitar_in_id=
+    guitar_loopback=false
+    guitar_gain=0.50
+    guitar_safe_frames=480
+    layout=auto
+    stereo_processing=music
+
+   If your default endpoint isn't called "Speakers", use the exact substring
+   from engine.exe --list (RENDER section).
+
+4. Configure AmpliTube's ASIO4ALL device as usual for your Realtek INPUT.
+   In ASIO4ALL advanced device panel, enable VB-CABLE playback ("CABLE Input")
+   as the ASIO OUTPUT instead of Realtek S/PDIF. Disable Realtek optical output
+   in ASIO4ALL so the encoder can own that device. Audio hosts may require
+   stopping and restarting their engine after changing ASIO endpoints.
+
+5. Run in the installation directory:
+       engine.exe --mode reload
+   After the engine restarts the audio graph:
+       engine.exe --mode "guitar bus"
+   Expected response: active. A failed endpoint open is logged in engine.log.
+6. Launch AmpliTube using the existing Play Guitar shortcut. With the bus
+   active, the shortcut no longer switches away from SURROUND. Play YouTube
+   and guitar together; the guitar is inserted after OHL Music processing into
+   FL/FR only, and a final PCM peak limiter protects the encoder.
+
+EXTRA OPTIONS
+-------------
+guitar_gain=0.0..2.0          Guitar PCM level (default 0.50).
+guitar_safe_frames=0..1536  Extra clock-jitter margin in frames (default 480 = 10ms at 48k).
+                             Increase if underruns; decrease if monitoring feels delayed.
+guitar_in=...                 Recording endpoint friendly-name substring.
+guitar_in_id=...              Exact recording endpoint ID (overrides name).
+guitar_loopback=true          Read a RENDER endpoint instead, via WASAPI loopback.
+--guitar-in / --guitar-in-id   Same on the engine command line.
+--guitar-gain                 Same on command line.
+--guitar-loopback             Use RENDER loopback for guitar source.
+--mode reload                 Rebuild audio graph from edited configuration.
+--mode "guitar bus"           Query if simultaneous capture is actually active.
+
+Capture format constraints: mono or stereo signed PCM16, signed PCM32, or float32
+at the SAME sample rate as Windows music (use 48,000 Hz for both). Other formats
+are rejected loudly rather than silently playing at the wrong pitch.
+
+NOT TRUE SINGLE-DIGIT-MILLISECOND GUITAR MONITORING
+---------------------------------------------------
+Dolby Digital uses 1,536-sample frames: 32 ms at 48 kHz, plus capture, ASIO,
+encoding, buffering, receiver decoding and speaker transit. This path provides
+simultaneous playback, but cannot match the old direct optical stereo ASIO mode
+in responsiveness. If it feels too late while playing guitar, the old manual
+GUITAR mode still offers direct PCM monitoring. Truly low-latency simultaneous
+5.1 requires bypassing AC-3 (such as a six-channel analog PCM connection) or
+another non-AC-3 output backend.
+
+This is a new architecture and has passed SOFTWARE CI only. Your exact
+Realtek/ASIO4ALL/VB-CABLE/STR-K900 routing requires a real hardware test.

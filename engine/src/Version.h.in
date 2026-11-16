@@ -1,3 +1,4 @@
 // Generated from Version.h.in by CMake (configure_file). Do not edit the generated copy.
 #pragma once
 #define VAC3_VERSION "@VAC3_VERSION@"
+#define VAC3_BUILD_SHA "@VAC3_BUILD_SHA@"

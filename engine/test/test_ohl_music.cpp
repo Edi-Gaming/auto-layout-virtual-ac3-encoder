@@ -1,0 +1,938 @@
+// test_ohl_music.cpp — behavioral tests for OHL Music spatializer.
+#include "doctest.h"
+#include "OhlMusicUpmixer.h"
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+double ChannelRms(const std::vector<float>& x, int ch, size_t startFrame = 0)
+{
+  double e = 0.0;
+  const size_t frames = x.size() / OhlMusicUpmixer::kChannels;
+  if (startFrame >= frames) return 0.0;
+  for (size_t i = startFrame; i < frames; ++i)
+  {
+    const double s = x[OhlMusicUpmixer::kChannels * i + static_cast<size_t>(ch)];
+    e += s * s;
+  }
+  return std::sqrt(e / static_cast<double>(frames - startFrame));
+}
+
+double ChannelPeak(const std::vector<float>& x, int ch)
+{
+  double peak = 0.0;
+  const size_t frames = x.size() / OhlMusicUpmixer::kChannels;
+  for (size_t i = 0; i < frames; ++i)
+    peak = std::max(peak, std::fabs(static_cast<double>(x[6 * i + static_cast<size_t>(ch)])));
+  return peak;
+}
+
+OhlMusicUpmixer::Params EqualDistanceParams()
+{
+  OhlMusicUpmixer::Params p;
+  // Legacy behavioral tests target the known-good v0.10 broadband renderer. Dedicated v0.11
+  // tests exercise the streaming per-bin path separately.
+  p.perBinRouting = 0.0f;
+  p.distanceInches = {{33.0f, 33.0f, 33.0f, 33.0f, 33.0f, 33.0f}};
+  return p;
+}
+
+std::vector<float> MakeSineStereo(size_t frames,
+                                  double hz,
+                                  bool antiPhase,
+                                  bool rightEnabled = true,
+                                  float amplitude = 0.30f)
+{
+  std::vector<float> x(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const float s =
+        amplitude * static_cast<float>(std::sin(2.0 * kPi * hz * static_cast<double>(i) / 48000.0));
+    x[2 * i] = s;
+    x[2 * i + 1] = rightEnabled ? (antiPhase ? -s : s) : 0.0f;
+  }
+  return x;
+}
+
+} // namespace
+
+TEST_CASE("OHL Music default speaker distances produce Edi's measured alignment delays")
+{
+  OhlMusicUpmixer upmixer;
+  OhlMusicUpmixer::Params p;
+  REQUIRE(upmixer.Init(p));
+
+  const auto& d = upmixer.DelaySamples();
+  CHECK(d[0] == 0);   // FL 33"
+  CHECK(d[1] == 0);   // FR 33"
+  CHECK(d[2] == 11);  // C  30"
+  CHECK(d[3] == 0);
+  CHECK(d[4] == 21);  // SL 27"
+  CHECK(d[5] == 0);   // SR 33"
+}
+
+
+TEST_CASE("OHL Music preserves FL/FR exactly while keeping LFE silent")
+{
+  constexpr size_t frames = 1536;
+  const auto in = MakeSineStereo(frames, 440.0, false);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  REQUIRE(upmixer.Init(p));
+  REQUIRE(upmixer.ProcessingLatencySamples() == 0);
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  double maxFrontError = 0.0;
+  double maxLfe = 0.0;
+  for (size_t i = 0; i < frames; ++i)
+  {
+    maxFrontError = std::max(
+        maxFrontError, std::fabs(static_cast<double>(out[6 * i] - in[2 * i])));
+    maxFrontError = std::max(
+        maxFrontError, std::fabs(static_cast<double>(out[6 * i + 1] - in[2 * i + 1])));
+    maxLfe = std::max(maxLfe, std::fabs(static_cast<double>(out[6 * i + 3])));
+  }
+
+  CHECK(maxFrontError < 1.0e-7);
+  CHECK(maxLfe < 1.0e-7);
+}
+
+TEST_CASE("OHL Music does not synthesize rear energy from centered mono program")
+{
+  constexpr size_t frames = 1536;
+  const auto in = MakeSineStereo(frames, 1200.0, false);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.30f;
+  p.surroundGain = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  CHECK(ChannelRms(out, 4) < 1.0e-6);
+  CHECK(ChannelRms(out, 5) < 1.0e-6);
+}
+
+TEST_CASE("OHL Music base width passes subtle stereo difference without copying the center")
+{
+  constexpr size_t frames = 1536;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double t = static_cast<double>(i) / 48000.0;
+    const float common = 0.25f * static_cast<float>(std::sin(2.0 * kPi * 700.0 * t));
+    const float stereoDetail = 0.035f * static_cast<float>(std::sin(2.0 * kPi * 3100.0 * t));
+    in[2 * i] = common + stereoDetail;
+    in[2 * i + 1] = common - stereoDetail;
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.16f;
+  p.surroundGain = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double rear = 0.5 * (ChannelRms(out, 4) + ChannelRms(out, 5));
+  CHECK(rear > 0.0008);
+  CHECK(rear < 0.015);
+}
+
+
+TEST_CASE("OHL Music opens diffuse ambience but keeps it subordinate to the fronts")
+{
+  constexpr size_t frames = 1536;
+
+  OhlMusicUpmixer ambience;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 0.16f;
+  REQUIRE(ambience.Init(p));
+
+  const auto anti = MakeSineStereo(frames, 1800.0, true);
+  std::vector<float> out(frames * 6, 0.0f);
+  ambience.ProcessStereo(anti.data(), frames, out.data());
+
+  const double front = 0.5 * (ChannelRms(out, 0, 256) + ChannelRms(out, 1, 256));
+  const double rear = 0.5 * (ChannelRms(out, 4, 256) + ChannelRms(out, 5, 256));
+  MESSAGE("diffuse front RMS=" << front << " rear RMS=" << rear);
+  CHECK(rear > 0.015);
+  CHECK(rear <= front * 0.165);
+}
+
+
+TEST_CASE("OHL Music v0.11.2 direct-event protection never chops the continuous width bed")
+{
+  constexpr size_t frames = 512;
+  std::vector<float> clap(frames * 2, 0.0f);
+  for (size_t i = 0; i < 32; ++i)
+    clap[2 * i] = 0.95f * static_cast<float>(1.0 - static_cast<double>(i) / 32.0);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.25f;
+  p.surroundGain = 0.0f; // isolate the stable bed from the adaptive layer.
+  p.rearBudget = 1.0f;
+
+  OhlMusicUpmixer unprotected;
+  p.directReject = 0.0f;
+  REQUIRE(unprotected.Init(p));
+  std::vector<float> openOut(frames * 6, 0.0f);
+  unprotected.ProcessStereo(clap.data(), frames, openOut.data());
+
+  OhlMusicUpmixer protectedMixer;
+  p.directReject = 0.90f;
+  REQUIRE(protectedMixer.Init(p));
+  std::vector<float> protectedOut(frames * 6, 0.0f);
+  protectedMixer.ProcessStereo(clap.data(), frames, protectedOut.data());
+
+  const double openPeak = ChannelPeak(openOut, 4);
+  const double protectedPeak = ChannelPeak(protectedOut, 4);
+  MESSAGE("rear clap bed open=" << openPeak << " protected=" << protectedPeak);
+  CHECK(openPeak > 0.02);
+  CHECK(std::fabs(protectedPeak - openPeak) < openPeak * 0.05);
+}
+
+
+TEST_CASE("OHL Music sustained ambience survives after the onset detector settles")
+{
+  constexpr size_t frames = 4096;
+  const auto anti = MakeSineStereo(frames, 2200.0, true);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.90f;
+  p.rearBudget = 0.20f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(anti.data(), frames, out.data());
+
+  const double settledRear = 0.5 * (ChannelRms(out, 4, 2048) + ChannelRms(out, 5, 2048));
+  CHECK(settledRear > 0.02);
+}
+
+TEST_CASE("OHL Music center sparkle strongly favors treble over low-frequency center content")
+{
+  constexpr size_t frames = 1536;
+
+  OhlMusicUpmixer low;
+  auto p = EqualDistanceParams();
+  p.widthFloor = 0.0f;
+  p.surroundGain = 0.0f;
+  p.centerTrebleGain = 0.25f;
+  REQUIRE(low.Init(p));
+
+  const auto lowIn = MakeSineStereo(frames, 200.0, false);
+  std::vector<float> lowOut(frames * 6, 0.0f);
+  low.ProcessStereo(lowIn.data(), frames, lowOut.data());
+
+  OhlMusicUpmixer high;
+  REQUIRE(high.Init(p));
+  const auto highIn = MakeSineStereo(frames, 7000.0, false);
+  std::vector<float> highOut(frames * 6, 0.0f);
+  high.ProcessStereo(highIn.data(), frames, highOut.data());
+
+  const double lowCenter = ChannelRms(lowOut, 2);
+  const double highCenter = ChannelRms(highOut, 2);
+
+  CHECK(highCenter > 0.03);
+  CHECK(highCenter > 4.0 * lowCenter);
+}
+
+
+TEST_CASE("OHL Music ambience band weights control high-frequency spatial extraction")
+{
+  constexpr size_t frames = 1536;
+  const auto highIn = MakeSineStereo(frames, 7000.0, true);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.0f;
+  p.directReject = 0.0f;
+  p.ambienceLowWeight = 0.0f;
+  p.ambienceMidWeight = 0.0f;
+  p.ambienceHighWeight = 1.0f;
+  p.spectralIntelligence = 0.0f;
+
+  OhlMusicUpmixer enabled;
+  REQUIRE(enabled.Init(p));
+  std::vector<float> enabledOut(frames * 6, 0.0f);
+  enabled.ProcessStereo(highIn.data(), frames, enabledOut.data());
+
+  p.ambienceHighWeight = 0.0f;
+  OhlMusicUpmixer disabled;
+  REQUIRE(disabled.Init(p));
+  std::vector<float> disabledOut(frames * 6, 0.0f);
+  disabled.ProcessStereo(highIn.data(), frames, disabledOut.data());
+
+  const double enabledRear =
+      0.5 * (ChannelRms(enabledOut, 4) + ChannelRms(enabledOut, 5));
+  const double disabledRear =
+      0.5 * (ChannelRms(disabledOut, 4) + ChannelRms(disabledOut, 5));
+
+  MESSAGE("high-band enabled rear RMS=" << enabledRear << " disabled=" << disabledRear);
+  CHECK(enabledRear > 0.02);
+  CHECK(disabledRear < 1.0e-6);
+}
+
+TEST_CASE("OHL Music ambience attack time controls how quickly the rear opens")
+{
+  constexpr size_t frames = 1536;
+  const auto mono = MakeSineStereo(frames, 1000.0, false);
+  const auto diffuse = MakeSineStereo(frames, 2500.0, true);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.0f;
+  p.directReject = 0.0f;
+
+  OhlMusicUpmixer fast;
+  p.ambienceAttackMs = 20.0f;
+  REQUIRE(fast.Init(p));
+  std::vector<float> scratch(frames * 6, 0.0f);
+  fast.ProcessStereo(mono.data(), frames, scratch.data());
+  std::vector<float> fastOut(frames * 6, 0.0f);
+  fast.ProcessStereo(diffuse.data(), frames, fastOut.data());
+
+  OhlMusicUpmixer slow;
+  p.ambienceAttackMs = 1200.0f;
+  REQUIRE(slow.Init(p));
+  std::fill(scratch.begin(), scratch.end(), 0.0f);
+  slow.ProcessStereo(mono.data(), frames, scratch.data());
+  std::vector<float> slowOut(frames * 6, 0.0f);
+  slow.ProcessStereo(diffuse.data(), frames, slowOut.data());
+
+  const double fastRear = 0.5 * (ChannelRms(fastOut, 4) + ChannelRms(fastOut, 5));
+  const double slowRear = 0.5 * (ChannelRms(slowOut, 4) + ChannelRms(slowOut, 5));
+
+  MESSAGE("attack fast rear RMS=" << fastRear << " slow=" << slowRear);
+  CHECK(fastRear > slowRear * 2.0);
+}
+
+TEST_CASE("OHL Music rear trims independently balance SL and SR")
+{
+  constexpr size_t frames = 1536;
+  const auto in = MakeSineStereo(frames, 2400.0, true);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  p.rearLeftTrim = 0.50f;
+  p.rearRightTrim = 1.50f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double left = ChannelRms(out, 4, 128);
+  const double right = ChannelRms(out, 5, 128);
+  MESSAGE("rear trims left=" << left << " right=" << right);
+  CHECK(right > left * 2.5);
+  CHECK(right < left * 3.5);
+}
+
+TEST_CASE("OHL Music rear low-pass can darken high-frequency surround detail")
+{
+  constexpr size_t frames = 4096;
+  const auto highIn = MakeSineStereo(frames, 9000.0, true);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f; // isolate the rear LP itself from the v0.9 energy ceiling
+
+  OhlMusicUpmixer open;
+  p.rearLowpassHz = 20000.0f;
+  REQUIRE(open.Init(p));
+  std::vector<float> openOut(frames * 6, 0.0f);
+  open.ProcessStereo(highIn.data(), frames, openOut.data());
+
+  OhlMusicUpmixer dark;
+  p.rearLowpassHz = 2500.0f;
+  REQUIRE(dark.Init(p));
+  std::vector<float> darkOut(frames * 6, 0.0f);
+  dark.ProcessStereo(highIn.data(), frames, darkOut.data());
+
+  const double openRear = 0.5 * (ChannelRms(openOut, 4, 512) + ChannelRms(openOut, 5, 512));
+  const double darkRear = 0.5 * (ChannelRms(darkOut, 4, 512) + ChannelRms(darkOut, 5, 512));
+
+  MESSAGE("rear LP open=" << openRear << " dark=" << darkRear);
+  CHECK(openRear > darkRear * 2.0);
+}
+
+TEST_CASE("OHL Music center low-pass bounds the sparkle band")
+{
+  constexpr size_t frames = 4096;
+
+  auto p = EqualDistanceParams();
+  p.widthFloor = 0.0f;
+  p.surroundGain = 0.0f;
+  p.centerTrebleGain = 0.40f;
+  p.centerTrebleHz = 2000.0f;
+  p.centerLowpassHz = 5000.0f;
+
+  OhlMusicUpmixer presence;
+  REQUIRE(presence.Init(p));
+  const auto presenceIn = MakeSineStereo(frames, 3500.0, false);
+  std::vector<float> presenceOut(frames * 6, 0.0f);
+  presence.ProcessStereo(presenceIn.data(), frames, presenceOut.data());
+
+  OhlMusicUpmixer extreme;
+  REQUIRE(extreme.Init(p));
+  const auto extremeIn = MakeSineStereo(frames, 14000.0, false);
+  std::vector<float> extremeOut(frames * 6, 0.0f);
+  extreme.ProcessStereo(extremeIn.data(), frames, extremeOut.data());
+
+  const double presenceCenter = ChannelRms(presenceOut, 2, 512);
+  const double extremeCenter = ChannelRms(extremeOut, 2, 512);
+
+  MESSAGE("center band presence=" << presenceCenter << " extreme=" << extremeCenter);
+  CHECK(presenceCenter > extremeCenter * 1.5);
+}
+
+
+
+
+TEST_CASE("OHL Music v0.9 removes shared center before sparse rear extraction")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float sharedVoice =
+        0.30f * static_cast<float>(std::sin(2.0 * kPi * 1100.0 * tt));
+    const float leftTexture =
+        0.035f * static_cast<float>(std::sin(2.0 * kPi * 7800.0 * tt));
+    in[2 * i] = sharedVoice + leftTexture;
+    in[2 * i + 1] = sharedVoice;
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 0.0f;
+  p.widthFloor = 0.30f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double left = ChannelRms(out, 4, 512);
+  const double right = ChannelRms(out, 5, 512);
+  MESSAGE("shared-center sparse rear RMS left=" << left << " right=" << right);
+
+  CHECK(left > 0.00045);
+  CHECK(left < 0.0030);
+  CHECK(right < 0.0030);
+}
+
+
+TEST_CASE("OHL Music v0.9 front lock suppresses widened vocal residue")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float vocal =
+        0.30f * static_cast<float>(std::sin(2.0 * kPi * 1000.0 * tt));
+    const float stereoResidue =
+        0.045f * static_cast<float>(std::sin(2.0 * kPi * 1450.0 * tt));
+    in[2 * i] = vocal + stereoResidue;
+    in[2 * i + 1] = vocal - stereoResidue;
+  }
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 0.0f;
+  p.widthFloor = 0.28f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+
+  OhlMusicUpmixer unlocked;
+  p.frontLock = 0.0f;
+  REQUIRE(unlocked.Init(p));
+  std::vector<float> unlockedOut(frames * 6, 0.0f);
+  unlocked.ProcessStereo(in.data(), frames, unlockedOut.data());
+
+  OhlMusicUpmixer locked;
+  p.frontLock = 0.95f;
+  REQUIRE(locked.Init(p));
+  std::vector<float> lockedOut(frames * 6, 0.0f);
+  locked.ProcessStereo(in.data(), frames, lockedOut.data());
+
+  const double unlockedRear =
+      0.5 * (ChannelRms(unlockedOut, 4, 512) + ChannelRms(unlockedOut, 5, 512));
+  const double lockedRear =
+      0.5 * (ChannelRms(lockedOut, 4, 512) + ChannelRms(lockedOut, 5, 512));
+
+  MESSAGE("v0.9 vocal residual rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
+  CHECK(unlockedRear > 0.001);
+  CHECK(lockedRear < unlockedRear * 0.35);
+}
+
+
+TEST_CASE("OHL Music v0.9 front lock leaves decorrelated ambience available")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 9000.0, true);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.12f;
+  p.surroundGain = 0.70f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+
+  OhlMusicUpmixer unlocked;
+  p.frontLock = 0.0f;
+  REQUIRE(unlocked.Init(p));
+  std::vector<float> unlockedOut(frames * 6, 0.0f);
+  unlocked.ProcessStereo(in.data(), frames, unlockedOut.data());
+
+  OhlMusicUpmixer locked;
+  p.frontLock = 1.0f;
+  REQUIRE(locked.Init(p));
+  std::vector<float> lockedOut(frames * 6, 0.0f);
+  locked.ProcessStereo(in.data(), frames, lockedOut.data());
+
+  const double unlockedRear =
+      0.5 * (ChannelRms(unlockedOut, 4, 512) + ChannelRms(unlockedOut, 5, 512));
+  const double lockedRear =
+      0.5 * (ChannelRms(lockedOut, 4, 512) + ChannelRms(lockedOut, 5, 512));
+
+  MESSAGE("decorrelated rear RMS unlocked=" << unlockedRear << " locked=" << lockedRear);
+  CHECK(unlockedRear > 0.02);
+  CHECK(lockedRear > unlockedRear * 0.80);
+}
+
+
+TEST_CASE("OHL Music v0.9 preserves rear asymmetry instead of mirroring direct side energy")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 8000.0, false, false);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 0.0f;
+  p.widthFloor = 0.25f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double left = ChannelRms(out, 4, 512);
+  const double right = ChannelRms(out, 5, 512);
+  MESSAGE("asymmetric sparse rear RMS left=" << left << " right=" << right);
+
+  CHECK(left > 0.0045);
+  CHECK(right < left * 0.20);
+}
+
+
+TEST_CASE("OHL Music preserves measured speaker-distance alignment")
+{
+  constexpr size_t frames = 128;
+  std::vector<float> in(frames * 2, 0.0f);
+  in[0] = 1.0f;
+  in[1] = -1.0f;
+
+  OhlMusicUpmixer upmixer;
+  OhlMusicUpmixer::Params p;
+  p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  p.perBinRouting = 0.0f;
+  REQUIRE(upmixer.Init(p));
+  REQUIRE(upmixer.ProcessingLatencySamples() == 0);
+  REQUIRE(upmixer.DelaySamples()[4] == 21);
+  REQUIRE(upmixer.DelaySamples()[5] == 0);
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  CHECK(std::fabs(out[5]) > 0.005f);
+  for (int i = 0; i < 21; ++i)
+    CHECK(std::fabs(out[6 * static_cast<size_t>(i) + 4]) < 1.0e-7f);
+  CHECK(std::fabs(out[6 * 21 + 4]) > 0.005f);
+}
+
+
+
+TEST_CASE("OHL Music v0.9 rear budget prevents a second pair of mains")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    in[2 * i] =
+        0.35f * static_cast<float>(std::sin(2.0 * kPi * 900.0 * tt));
+    in[2 * i + 1] =
+        0.35f * static_cast<float>(std::sin(2.0 * kPi * 1730.0 * tt + 0.7));
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 2.0f;
+  p.widthFloor = 1.0f;
+  p.diffuseThreshold = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 0.10f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double front =
+      0.5 * (ChannelRms(out, 0, 512) + ChannelRms(out, 1, 512));
+  const double rear =
+      0.5 * (ChannelRms(out, 4, 512) + ChannelRms(out, 5, 512));
+
+  MESSAGE("rear-budget front RMS=" << front << " rear RMS=" << rear);
+  CHECK(rear > 0.005);
+  CHECK(rear <= front * 0.105);
+}
+
+TEST_CASE("OHL Music v0.9 diffuse gate keeps a sustained hard-panned instrument subtle")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 1300.0, false, false, 0.35f);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.widthFloor = 0.16f;
+  p.surroundGain = 0.70f;
+  p.diffuseThreshold = 0.10f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double front = ChannelRms(out, 0, 512);
+  const double rear = ChannelRms(out, 4, 512);
+  MESSAGE("hard-pan front RMS=" << front << " rear RMS=" << rear);
+
+  CHECK(rear > 0.001);
+  CHECK(rear < front * 0.08);
+}
+
+
+TEST_CASE("OHL Music v0.9 gives a moderate stereo mix an audible but subordinate rear bed")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float common =
+        0.24f * static_cast<float>(std::sin(2.0 * kPi * 740.0 * tt));
+    const float leftDetail =
+        0.085f * static_cast<float>(std::sin(2.0 * kPi * 2350.0 * tt + 0.20));
+    const float rightDetail =
+        0.085f * static_cast<float>(std::sin(2.0 * kPi * 3270.0 * tt + 0.85));
+    const float sharedAir =
+        0.035f * static_cast<float>(std::sin(2.0 * kPi * 7200.0 * tt));
+
+    in[2 * i] = common + leftDetail + sharedAir;
+    in[2 * i + 1] = common + rightDetail - 0.7f * sharedAir;
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double front =
+      0.5 * (ChannelRms(out, 0, 512) + ChannelRms(out, 1, 512));
+  const double rear =
+      0.5 * (ChannelRms(out, 4, 512) + ChannelRms(out, 5, 512));
+  const double ratio = rear / std::max(front, 1.0e-12);
+
+  MESSAGE("moderate-stereo front RMS=" << front << " rear RMS=" << rear
+          << " rear/front=" << ratio);
+
+  CHECK(ratio > 0.04);
+  CHECK(ratio <= 0.225);
+}
+
+
+TEST_CASE("OHL Music v0.9 fixed rear path obeys linear superposition")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> a(frames * 2);
+  std::vector<float> b(frames * 2);
+  std::vector<float> sum(frames * 2);
+
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float sa =
+        0.18f * static_cast<float>(std::sin(2.0 * kPi * 1100.0 * tt));
+    const float sb =
+        0.11f * static_cast<float>(std::sin(2.0 * kPi * 4700.0 * tt + 0.37));
+
+    // Balanced anti-phase fixtures keep all packet-level steering gains identical across
+    // A, B and A+B. With adaptive paths disabled, the rear audio path itself must be linear.
+    a[2 * i] = sa;
+    a[2 * i + 1] = -sa;
+    b[2 * i] = sb;
+    b[2 * i + 1] = -sb;
+    sum[2 * i] = sa + sb;
+    sum[2 * i + 1] = -(sa + sb);
+  }
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.surroundGain = 0.0f;
+  p.widthFloor = 0.30f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+
+  OhlMusicUpmixer ma;
+  OhlMusicUpmixer mb;
+  OhlMusicUpmixer ms;
+  REQUIRE(ma.Init(p));
+  REQUIRE(mb.Init(p));
+  REQUIRE(ms.Init(p));
+
+  std::vector<float> oa(frames * 6, 0.0f);
+  std::vector<float> ob(frames * 6, 0.0f);
+  std::vector<float> os(frames * 6, 0.0f);
+  ma.ProcessStereo(a.data(), frames, oa.data());
+  mb.ProcessStereo(b.data(), frames, ob.data());
+  ms.ProcessStereo(sum.data(), frames, os.data());
+
+  double maxError = 0.0;
+  for (size_t i = 0; i < frames; ++i)
+  {
+    for (int ch : {4, 5})
+    {
+      const size_t ix = 6 * i + static_cast<size_t>(ch);
+      maxError = std::max(
+          maxError,
+          std::fabs(static_cast<double>(os[ix] - (oa[ix] + ob[ix]))));
+    }
+  }
+
+  MESSAGE("v0.9 rear superposition max error=" << maxError);
+  CHECK(maxError < 2.0e-6);
+}
+
+
+TEST_CASE("OHL Music v0.10 spectral intelligence notices selective ambience behind a loud center")
+{
+  constexpr size_t frames = 4096;
+  std::vector<float> in(frames * 2);
+  for (size_t i = 0; i < frames; ++i)
+  {
+    const double tt = static_cast<double>(i) / 48000.0;
+    const float center =
+        0.32f * static_cast<float>(std::sin(2.0 * kPi * 1000.0 * tt));
+    const float room =
+        0.055f * static_cast<float>(std::sin(2.0 * kPi * 7800.0 * tt + 0.37));
+    in[2 * i] = center + room;
+    in[2 * i + 1] = center - room;
+  }
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  p.spectralIntelligence = 1.0f;
+  p.spatialBinThreshold = 0.30f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const double rear =
+      0.5 * (ChannelRms(out, 4, 512) + ChannelRms(out, 5, 512));
+
+  MESSAGE("spectral ambience=" << upmixer.LastSpectralAmbience()
+          << " active bins=" << upmixer.LastSpatialBinFraction()
+          << " spectral center=" << upmixer.LastSpectralCenter()
+          << " rear RMS=" << rear);
+
+  CHECK(upmixer.LastSpectralAmbience() > 0.20f);
+  CHECK(upmixer.LastSpatialBinFraction() > 0.10f);
+  CHECK(upmixer.LastSpectralCenter() > 0.45f);
+  CHECK(rear > 0.005);
+}
+
+TEST_CASE("OHL Music v0.10 keeps dry hard-panned material from opening adaptive ambience")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 1700.0, false, false, 0.32f);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 1.0f;
+  p.spectralIntelligence = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  MESSAGE("hard-pan spectral ambience=" << upmixer.LastSpectralAmbience()
+          << " active bins=" << upmixer.LastSpatialBinFraction()
+          << " rear amount=" << upmixer.LastSurroundAmount());
+
+  CHECK(upmixer.LastSpectralAmbience() < 0.08f);
+  CHECK(upmixer.LastSpatialBinFraction() < 0.10f);
+  CHECK(upmixer.LastSurroundAmount() < 0.05f);
+}
+
+
+TEST_CASE("OHL Music v0.11 per-bin routing preserves fronts after exact spectral latency")
+{
+  constexpr size_t frames = 3072;
+  const auto in = MakeSineStereo(frames, 733.0, false);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.perBinRouting = 1.0f;
+  p.centerTrebleGain = 0.0f;
+  p.centerWidth = 1.0f;
+  REQUIRE(upmixer.Init(p));
+  REQUIRE(upmixer.ProcessingLatencySamples() == 512);
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  double prePeak = 0.0;
+  double maxError = 0.0;
+  for (size_t i = 0; i < frames; ++i)
+  {
+    if (i < 512)
+    {
+      prePeak = std::max(prePeak, std::fabs(static_cast<double>(out[6 * i])));
+      prePeak = std::max(prePeak, std::fabs(static_cast<double>(out[6 * i + 1])));
+      continue;
+    }
+
+    const size_t src = i - 512;
+    maxError = std::max(
+        maxError, std::fabs(static_cast<double>(out[6 * i] - in[2 * src])));
+    maxError = std::max(
+        maxError, std::fabs(static_cast<double>(out[6 * i + 1] - in[2 * src + 1])));
+  }
+
+  MESSAGE("v0.11 front pre-latency peak=" << prePeak << " max error=" << maxError);
+  CHECK(prePeak < 1.0e-7);
+  CHECK(maxError < 1.0e-7);
+}
+
+TEST_CASE("OHL Music v0.11 Center Width defaults to untouched phantom center and can focus into C")
+{
+  constexpr size_t frames = 4096;
+  const auto in = MakeSineStereo(frames, 1000.0, false, true, 0.28f);
+
+  auto p = EqualDistanceParams();
+  p.centerTrebleGain = 0.0f;
+  p.perBinRouting = 0.0f;
+
+  OhlMusicUpmixer phantom;
+  p.centerWidth = 1.0f;
+  REQUIRE(phantom.Init(p));
+  std::vector<float> phantomOut(frames * 6, 0.0f);
+  phantom.ProcessStereo(in.data(), frames, phantomOut.data());
+
+  OhlMusicUpmixer focused;
+  p.centerWidth = 0.0f;
+  REQUIRE(focused.Init(p));
+  std::vector<float> focusedOut(frames * 6, 0.0f);
+  focused.ProcessStereo(in.data(), frames, focusedOut.data());
+
+  const double phantomFront =
+      0.5 * (ChannelRms(phantomOut, 0, 512) + ChannelRms(phantomOut, 1, 512));
+  const double phantomCenter = ChannelRms(phantomOut, 2, 512);
+  const double focusedFront =
+      0.5 * (ChannelRms(focusedOut, 0, 512) + ChannelRms(focusedOut, 1, 512));
+  const double focusedCenter = ChannelRms(focusedOut, 2, 512);
+
+  MESSAGE("center width phantom F=" << phantomFront << " C=" << phantomCenter
+          << " focused F=" << focusedFront << " C=" << focusedCenter);
+
+  CHECK(phantomCenter < 1.0e-7);
+  CHECK(focusedCenter > phantomFront * 0.45);
+  CHECK(focusedFront < phantomFront * 0.70);
+  CHECK(focusedFront > phantomFront * 0.45);
+}
+
+TEST_CASE("OHL Music v0.11 hard rear budget still caps the true per-bin renderer")
+{
+  constexpr size_t frames = 8192;
+  const auto in = MakeSineStereo(frames, 4200.0, true, true, 0.32f);
+
+  OhlMusicUpmixer upmixer;
+  auto p = EqualDistanceParams();
+  p.perBinRouting = 1.0f;
+  p.centerTrebleGain = 0.0f;
+  p.frontLock = 0.0f;
+  p.directReject = 0.0f;
+  p.rearBudget = 0.10f;
+  p.surroundGain = 2.0f;
+  p.widthFloor = 1.0f;
+  REQUIRE(upmixer.Init(p));
+
+  std::vector<float> out(frames * 6, 0.0f);
+  upmixer.ProcessStereo(in.data(), frames, out.data());
+
+  const size_t skip = 2048;
+  const double front =
+      0.5 * (ChannelRms(out, 0, skip) + ChannelRms(out, 1, skip));
+  const double rear =
+      0.5 * (ChannelRms(out, 4, skip) + ChannelRms(out, 5, skip));
+
+  MESSAGE("v0.11 per-bin budget front=" << front << " rear=" << rear);
+  CHECK(front > 0.10);
+  CHECK(rear > 0.002);
+  CHECK(rear <= front * 0.105);
+}

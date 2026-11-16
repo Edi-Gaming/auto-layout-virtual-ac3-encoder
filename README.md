@@ -1,7 +1,17 @@
 # virtual-ac3-encoder
 
-[![CI](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/strepto42/virtual-ac3-encoder/actions/workflows/ci.yml)
+[![CI](https://github.com/Edi-Gaming/auto-layout-virtual-ac3-encoder/actions/workflows/ci.yml/badge.svg)](https://github.com/Edi-Gaming/auto-layout-virtual-ac3-encoder/actions/workflows/ci.yml)
 
+> **This fork adds automatic AC3 2.0 / 5.1 payload switching.** A Windows 5.1 virtual
+> endpoint often reports six channels even when an app is actually stereo, which makes an AVR
+> believe it is receiving 5.1 and can lock out receiver-side stereo modes such as Dolby Pro Logic
+> II / A.F.D. With `layout=auto` (the default in this fork), the engine monitors the actual
+> C/LFE/surround PCM channels: stereo material is encoded as genuine AC3 2.0, and meaningful
+> non-front activity switches immediately to AC3 5.1. It waits for sustained non-front silence
+> before returning to 2.0 so quiet scenes do not flap the receiver between modes.
+> Windows CI on this fork builds the engine and runs the encoder/unit-test suite for each PR
+> using the Visual Studio 2022 runner expected by the project's CMake generator.
+>
 A Windows 10/11 software implementation of **"Dolby Digital Live"**: a virtual 5.1 audio
 device that accepts any multichannel PCM stream, encodes it to **AC3 (Dolby Digital)** in real
 time, and streams it as an **IEC 61937 / S-PDIF** bitstream out a chosen **Toslink optical**
@@ -66,7 +76,8 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - [x] **Working end-to-end (confirmed).** Because Secure Boot is ON here, the live system uses
       **VB-CABLE** as the 5.1 source: `engine --in "CABLE Output" --out "Realtek Digital Output"`
       → receiver decodes **Dolby Digital**. (Our own driver is ready for when Secure Boot is off.)
-- [ ] **Phase 4 — packaging** (config file + auto-start at logon; optional tray UI).
+- [x] **Phase 4 — day-to-day packaging/control.** Config + one-shot hidden logon launcher + native
+      Windows tray controller + persistent SURROUND/GUITAR runtime handoff.
 
 ## Components / engine flags
 
@@ -74,18 +85,112 @@ the same engine Kodi uses internally. See `third_party/reference/` for the clone
 - `--list` — list render + capture endpoints.
 - `--probe` — which outputs accept AC3 passthrough (IsFormatSupported, non-intrusive).
 - `--mon` — capture-only throughput diagnostic (non-intrusive).
+- `--tray` / `--no-tray` — enable/disable the persistent Windows notification-area controller
+  (enabled by default).
 - `--loopback` — treat `--in` as a *render* endpoint and capture it via WASAPI loopback
   (used with the virtual driver).
 - `--in <name>` / `--in-id <id>` / `--out <name>` / `--out-id <id>` / `--out-spdif`
 - `--bitrate <bps>` (default 640000) / `--safe <frames>` (drift target, default 1536)
 - `--config <path>` (defaults to `virtual-ac3-encoder.conf` next to the exe) ·
   `--hidden` (hide console) · `--log <path>` (log to file) · `--duration <s>` (auto-stop)
-- `--upmix surround|off` — for stereo input, upmix to 5.1 via FFmpeg's `surround` filter
-  (a free DTS Neo:PC / Pro Logic II-style matrix upmix). **Default `surround`**; use `off` for
-  untouched stereo→front. Multichannel input is downmixed regardless.
+- `--upmix surround|off` — for fixed-5.1 operation, upmix a true <=2ch capture endpoint
+  to 5.1 via FFmpeg's `surround` filter. In automatic layout mode, stereo remains AC3 2.0 so
+  the AVR can perform its own stereo surround processing.
+- `--layout auto|5.1` — **default `auto` in this fork**. `auto` examines actual PCM activity
+  outside FL/FR and emits AC3 2.0 or 5.1 accordingly; `5.1` restores upstream fixed-5.1 behavior.
+- `--auto-threshold-db <dBFS>` — non-front peak threshold for 2.0→5.1 detection (default -60 dBFS).
+- `--auto-hold-ms <ms>` — non-front quiet time required before native 5.1 falls back to the
+  selected stereo policy (default 2000 ms).
+- `--stereo-processing receiver|music` — in auto layout, choose genuine AC3 2.0 for receiver-side
+  PLII/A.F.D. (`receiver`, default) or experimental OHL Music stereo spatialization (`music`).
+- `--music-surround-gain <gain>` — OHL Music adaptive ambience ceiling (default 0.70).
+- `--music-width-floor <gain>` — base stereo-difference width feed (default 0.16).
+- `--music-direct-reject <0..1>` — local transient/direct-event suppression in the rears.
+- Advanced OHL Music voicing/steering controls are available in the config and the native
+  **OHL Music Spatial Lab** UI; see below.
+
+With `stereo_processing=receiver`, auto-layout keeps the original stereo and 5.1 FFmpeg AC3
+encoders alive and switches AC3 payload metadata without reopening S/PDIF.
+
+### Experimental OHL Music v0.4
+
+`stereo_processing=music` replaces receiver-side PLII for stereo material with an original
+software spatializer before AC3 encoding.
+
+v0.4 keeps the hardware-liked v0.3 **ambience-first topology** intact: FL/FR remain the original
+stereo program, rear energy is still derived only from stereo-difference/diffuse residue, native
+multichannel input still bypasses OHL Music, and LFE is still not synthesized. The change is
+control: most of the useful DSP constants are no longer hard-coded.
+
+The rear extractor now exposes:
+
+- **Adaptive ambience** — maximum gain added when the analyser sees diffuse spatial information.
+- **Base side width** — minimum gain on genuine L-R stereo-difference material only. It still
+  cannot manufacture rear energy from centered/mono content.
+- **Low / Mid / High ambience weights** — independently decide how much <~300 Hz, ~300-3000 Hz,
+  and >~3000 Hz diffuseness contributes to steering. This is useful for making the rears more
+  "air/room" focused without dragging lower-frequency main events behind the listener.
+- **Ambience attack / release** — how quickly the rear field opens and how long it stays open
+  after spatial information falls away.
+- **Direct-event reject** — how strongly clap/snare/onset events are kept forward.
+- **Direct sensitivity ratio** — lower values classify more sudden events as direct.
+- **Direct recovery** — how quickly the rear feed is allowed back after an onset.
+- **Rear high-pass / low-pass** — independently voice the surround speakers as an ambience band.
+- **Independent SL / SR trims** — compensate room or speaker-level asymmetry without touching
+  distance/time alignment.
+- **Center sparkle gain + HP/LP band** — use the bright physical center only over a chosen presence
+  band instead of giving it the whole vocal.
+- **Per-speaker listening distance** — integer-sample time alignment remains applied before AC3.
+
+Reference v0.4 defaults intentionally reproduce the successful v0.3 feel before the new controls
+are touched:
+
+```ini
+music_surround_gain=0.70
+music_width_floor=0.16
+
+music_ambience_low_weight=0.08
+music_ambience_mid_weight=0.46
+music_ambience_high_weight=0.46
+music_ambience_attack_ms=100
+music_ambience_release_ms=520
+
+music_direct_reject=0.78
+music_direct_threshold=1.45
+music_direct_recovery_ms=18
+
+music_center_treble_gain=0.18
+music_center_treble_hz=2400
+music_center_lowpass_hz=16000
+
+music_rear_highpass_hz=160
+music_rear_lowpass_hz=18000
+music_rear_left_trim=1.00
+music_rear_right_trim=1.00
+```
+
+#### OHL Music Spatial Lab
+
+The tray and main mode switcher expose **OHL Music settings...**. v0.4 turns that window into an
+advanced tuning surface grouped into Spatial field, Direct events/percussion, Speaker voicing, and
+Geometry/time alignment.
+
+Four quick-start presets populate the controls without saving anything until **Apply Live**:
+
+- **Natural** — restrained width, stronger direct-event rejection, darker rears.
+- **Wide** — broader stage and more base side width without returning to v0.2 program-copying.
+- **Ambient** — high-frequency/diffuse weighted, slower room decay, aggressive onset rejection.
+- **v0.3 Baseline** — restores the v0.3 reference tune.
+
+**Reload Saved** discards unsaved experiments and restores the installed config. **Apply Live**
+persists the managed keys and asks the running daemon to rebuild its surround pipeline without
+exiting the background engine. Existing day-to-day installs keep their already-tuned values on
+upgrade; only newly introduced keys are added with defaults.
 
 Config precedence: built-in defaults < config file (`key=value`: `in`, `out`, `in_id`, `out_id`,
-`bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`) < command-line flags.
+`bitrate`, `safe`, `loopback`, `out_spdif`, `upmix`, `layout`, `auto_threshold_db`,
+`auto_hold_ms`, `stereo_processing`, `music_surround_gain`, `music_distance_*_in`, `tray`)
+< command-line flags.
 
 ## Driver (Phase 3)
 
@@ -122,11 +227,171 @@ engine\build\Release\engine.exe --in "CABLE Output" --out "Realtek Digital Outpu
 Set the virtual device as the Windows default 5.1 output, play surround content, and switch the
 receiver to the matching optical input — it should report Dolby Digital.
 
+### Concurrent guitar + surround mix (experimental)
+
+**OHL now supports two simultaneous inputs in one optical output.** Set
+`guitar_in=CABLE Output` (or `guitar_in_id=<endpoint-id>`) to activate a second
+independent WASAPI capture thread and PCM ring. OHL captures system audio
+separately, preserves the existing OHL Music 5.1 spatializer, places the
+processed guitar signal into the front channels **after** spatialization, peak-limits
+the resulting six channels, and encodes one constant 5.1 Dolby Digital stream.
+The guitar source is excluded from OHL's rear ambience synthesis; music and
+guitar have independent capture clocks with stale guitar packets discarded.
+
+**Working with only one VB-CABLE:** Route normal Windows audio to your Realtek
+`Speakers` endpoint and configure OHL to loopback-capture that *render* endpoint.
+Route AmpliTube's ASIO4ALL output to `CABLE Input` and configure OHL's second
+capture to read `CABLE Output`. OHL must exclusively own Realtek **S/PDIF**;
+ASIO4ALL must not open that optical output. Set both endpoints to 48 kHz.
+
+**One-click setup:** After running `INSTALL-DAY-TO-DAY.cmd`, run
+`ENABLE-CONCURRENT-GUITAR.cmd` from the extracted build folder. It checks that
+the device names exist, backs up your original config, configures the two input
+paths, and reloads the engine. `DISABLE-CONCURRENT-GUITAR.cmd` restores that
+backup. Then set Windows default sound to Speakers and configure AmpliTube as
+described below.
+
+Or edit the installed `virtual-ac3-encoder.conf` manually (preserve your
+optical `out` settings):
+
+```ini
+in=Speakers
+in_id=
+loopback=true
+guitar_in=CABLE Output
+guitar_in_id=
+guitar_loopback=false
+guitar_gain=0.50
+guitar_safe_frames=480
+layout=auto
+stereo_processing=music
+```
+
+After editing: `engine.exe --mode reload`; verify with
+`engine.exe --mode "guitar bus"` (expects `active`). With this bus active, the
+existing **Play Guitar (ASIO)** shortcut starts your chosen app **without
+disabling surround**. The manual Guitar mode still releases S/PDIF for direct
+ASIO monitoring when you need it.
+
+See the packaged **CONCURRENT-GUITAR-SETUP.txt** for the full routing, format
+constraints, ASIO4ALL settings, and troubleshooting.
+
+**Latency caveat:** This enables *simultaneous* playback, not single-digit-
+millisecond monitoring. Dolby Digital encodes 1536 samples per frame (32 ms at
+48 kHz) before Windows and receiver overhead. Low-latency simultaneous 5.1
+monitoring would require a non-AC-3 output backend, such as multichannel
+analog PCM, and suitable hardware. Hardware validation on Realtek/ASIO4ALL/
+VB-CABLE/STR-K900 remains outstanding.
+
+### Legacy direct-ASIO guitar mode
+
+For lowest available latency through the current optical receiver, the existing
+Guitar mode releases S/PDIF entirely so ASIO4ALL can monitor stereo PCM.
+
+The engine therefore has a persistent runtime mode switcher:
+
+```powershell
+engine.exe --switcher
+# or:
+engine.exe --mode guitar
+engine.exe --mode surround
+engine.exe --mode status
+```
+
+**SURROUND** is the normal VB-CABLE -> AC3 -> S/PDIF path.
+
+**GUITAR** stops and destroys the live WASAPI capture/passthrough objects while keeping the
+background `engine.exe` process alive. Destroying the output object releases the exclusive S/PDIF
+`IAudioClient`, allowing ASIO4ALL / AmpliTube to open the Realtek optical endpoint directly with
+the low-latency PCM path. Switching back to SURROUND reconstructs the normal pipeline and
+reacquires S/PDIF. If another application still owns S/PDIF, the engine reports the error and
+retries every two seconds.
+
+When the hidden background engine is already running, double-clicking `engine.exe` with no
+arguments opens the mode switcher instead of starting a duplicate engine. The installer also adds
+an **Audio mode switcher** Start Menu shortcut.
+
+### One-click OHL guitar sessions
+
+Open **OHL Audio Mode Switcher** and choose **PLAY GUITAR / OPEN ASIO APP**, or select
+**Play guitar / launch ASIO app...** in the OHL tray. The day-to-day installer also creates
+a pinnable **Play Guitar (ASIO)** Start Menu shortcut.
+
+The first launch prompts for the guitar application's executable (e.g. AmpliTube). OHL
+saves that path per-user, independently of ASIO4ALL's per-host device configuration.
+
+**When the concurrent guitar bus is enabled**, a click launches the selected ASIO host
+while leaving OHL Music and the AC-3 output active. It does not switch modes.
+**Otherwise**, the legacy shortcut requests GUITAR mode, waits until the engine releases
+S/PDIF, launches the host and tracks its process to restore SURROUND on exit.
+
+The console accepts --launch-guitar; the native UI accepts --guitar-launch.
+Use **Change Guitar App...** to change the executable. The existing **Guitar**
+mode button is still a *manual release-only* override.
+
+Limitations: this does **not** reinitialize Realtek, modify ASIO4ALL's stored settings,
+or automatically repair ASIO4ALL driver state. Hosts that delegate launches to an
+already-running process may not provide a trackable PID, so automatic mode restoration
+is not guaranteed for those apps. Real hardware validation is still required.
+
+### Surround Wizard / Sparkle Field
+
+Choose **Surround Wizard / Sparkle Field...** from the OHL tray or mode switcher.
+This launches the native Surround Wizard (OHL-Control.exe --surround-wizard).
+
+The Sparkle Field emits short randomized directional events in the five speaker
+channels through the existing AC-3 diagnostic encoder. It does not send program
+audio through ASIO or the virtual cable. Five textures are available:
+Mixed, Sine, Triangle, Metallic, and Noise.
+
+Current defaults: 9 events per second, 240 ms decay, frequencies roughly 700–9000 Hz.
+The requested level is capped at -18 dBFS, LFE remains silent, and the diagnostic
+auto-stops after 16 seconds or when the Wizard is closed. **STOP ALL** restores
+normal program audio immediately. Available only in SURROUND mode.
+
+The named-pipe command accepts:
+- test sparkle [mixed|sine|triangle|metal|noise] [rate] [decay-ms] [level-dB]
+- test stop
+
+Start with a low receiver volume when testing bright high-frequency signals.
+
+### Tray controller
+
+The persistent engine is intended to be used day to day from the Windows notification area.
+The tray icon uses a compact crop of the actual holographic OHL emblem and its tooltip reports
+SURROUND, GUITAR, transition, or error status. The larger mode switcher uses the same OHL mark in
+its title bar and a dark, cleaner OHL-styled layout.
+
+Right-click the icon for:
+
+- **Surround mode** — reacquire VB-CABLE + exclusive AC3 S/PDIF.
+- **Guitar / low-latency mode** — release S/PDIF for ASIO4ALL / AmpliTube.
+- **Open mode switcher...** — open the larger mode controller.
+- **Play guitar / launch ASIO app...** — release S/PDIF and launch the saved host.
+- **Surround Wizard / Sparkle Field...** — open 5.1 spatial diagnostics.
+- **Open engine log** — available when the daemon was launched with `--log`.
+- **Exit engine** — cleanly stop the persistent daemon.
+
+Double-click the tray icon to open the larger mode switcher. The tray icon survives normal mode
+changes because the engine process itself never exits. Explorer/taskbar restarts are detected and
+the icon is re-added automatically.
+
+Set `tray=0` in the config or pass `--no-tray` for headless operation.
+
+For the CI portable build, extract the artifact and double-click **`INSTALL-DAY-TO-DAY.cmd`**.
+It replaces the staged engine/DLLs, preserves an existing working config, enables tray control,
+removes legacy fixed-5.1 startup entries, installs one authoritative **OHL Virtual AC3 Encoder**
+Startup shortcut that invokes the one-shot hidden `OHL-Autostart.vbs` launcher for the current
+`%LOCALAPPDATA%\\virtual-ac3-encoder\\engine.exe`, creates
+an Audio Mode Switcher Start Menu shortcut, and starts the new background engine directly. Tray **Exit engine** is a normal intentional stop; the
+engine stays stopped until manually launched again or the next Windows logon.
+
+
 ## Set and forget (autostart)
 
-Install the engine to a stable per-user location and have it start hidden at every logon, with
-restart-on-failure (no elevation, no Task Scheduler — a Startup-folder supervisor that runs in the
-real interactive session):
+Install the engine to a stable per-user location and have it start hidden at every logon
+(no elevation, no Task Scheduler — a one-shot hidden Startup launcher in the real interactive
+session):
 
 ```powershell
 scripts\setup-autostart.ps1                                   # VB-CABLE -> Realtek (defaults)
@@ -136,8 +401,13 @@ scripts\remove-autostart.ps1 [-DeleteInstall]                 # undo
 ```
 
 This stages `engine.exe` + DLLs to `%LOCALAPPDATA%\virtual-ac3-encoder`, writes
-`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and drops a supervisor in the
-Startup folder that runs `engine --hidden --log` and relaunches it if it exits.
+`virtual-ac3-encoder.conf` there (edit it to change devices/bitrate), and creates **one authoritative** `OHL Virtual AC3 Encoder.lnk` in the Startup folder, targeting
+a uniquely named one-shot `OHL-Autostart.vbs` launcher. That launcher starts the exact installed
+engine with `--hidden --log` and immediately exits; it is not a watchdog. Setup removes the known legacy
+`Virtual AC3 Encoder.lnk`, `VirtualAc3Encoder.vbs`, old scheduled-task names, and old HKCU Run
+entries before creating the OHL shortcut. The persistent engine itself owns SURROUND/GUITAR mode
+changes. The installer also creates a **Start OHL Encoder** Start Menu shortcut for manual recovery
+if the daemon was exited.
 
 ## Build (engine)
 

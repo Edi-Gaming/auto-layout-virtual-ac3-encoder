@@ -52,26 +52,38 @@ bool SpdifEncoder::Init(const Params& p)
   codecCtx_->sample_fmt = AV_SAMPLE_FMT_FLTP; // FFmpeg's AC3 encoder takes planar float
   codecCtx_->time_base = av_make_q(1, p.sampleRate);
 
-  // The encoder (and S/PDIF) carry 5.1. Prefer the "back" variant to match Windows'
-  // KSAUDIO_SPEAKER_5POINT1 (FL FR FC LFE BL BR); fall back to "side" 5.1 if the
-  // encoder build rejects it.
-  AVChannelLayout enc51back = AV_CHANNEL_LAYOUT_5POINT1_BACK;
-  AVChannelLayout enc51side = AV_CHANNEL_LAYOUT_5POINT1;
-  av_channel_layout_copy(&codecCtx_->ch_layout, &enc51back);
-
-  int rc = avcodec_open2(codecCtx_, codec, nullptr);
-  if (rc < 0)
+  // AC3 payload layout. The IEC 61937 carrier remains two-channel either way; this is the
+  // actual channel mode (acmod) an AVR sees when it parses the Dolby Digital frame.
+  int rc = 0;
+  if (p.outputLayout == OutputLayout::Stereo)
   {
-    av_channel_layout_uninit(&codecCtx_->ch_layout);
-    av_channel_layout_copy(&codecCtx_->ch_layout, &enc51side);
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    av_channel_layout_copy(&codecCtx_->ch_layout, &stereo);
     rc = avcodec_open2(codecCtx_, codec, nullptr);
-    if (rc < 0) { LogAv("avcodec_open2", rc); return false; }
+    if (rc < 0) { LogAv("avcodec_open2(stereo)", rc); return false; }
+  }
+  else
+  {
+    // Prefer the "back" 5.1 variant to match Windows' KSAUDIO_SPEAKER_5POINT1
+    // (FL FR FC LFE BL BR); fall back to "side" 5.1 if the encoder build rejects it.
+    AVChannelLayout enc51back = AV_CHANNEL_LAYOUT_5POINT1_BACK;
+    AVChannelLayout enc51side = AV_CHANNEL_LAYOUT_5POINT1;
+    av_channel_layout_copy(&codecCtx_->ch_layout, &enc51back);
+
+    rc = avcodec_open2(codecCtx_, codec, nullptr);
+    if (rc < 0)
+    {
+      av_channel_layout_uninit(&codecCtx_->ch_layout);
+      av_channel_layout_copy(&codecCtx_->ch_layout, &enc51side);
+      rc = avcodec_open2(codecCtx_, codec, nullptr);
+      if (rc < 0) { LogAv("avcodec_open2(5.1)", rc); return false; }
+    }
   }
 
   framesPerPacket_ = codecCtx_->frame_size; // 1536 for AC3
 
-  // Scratch frame holding the planar-float 5.1 samples handed to the encoder. Both the swr
-  // path and the surround-filter path fill this.
+  // Scratch frame holding planar-float samples handed to the encoder. Both the swr path
+  // and (for 5.1 output) the surround-filter path fill this.
   frame_ = av_frame_alloc();
   if (!frame_) return false;
   frame_->format = AV_SAMPLE_FMT_FLTP;
@@ -81,17 +93,19 @@ bool SpdifEncoder::Init(const Params& p)
   rc = av_frame_get_buffer(frame_, 0);
   if (rc < 0) { LogAv("av_frame_get_buffer", rc); return false; }
 
-  // Input conditioning: either the `surround` upmix filter (stereo->5.1) or plain swr
-  // convert/downmix. Surround only applies to <= 2ch input; multichannel always downmixes.
-  useFilter_ = (p.upmix == Upmix::Surround && inLayout_.nb_channels <= 2);
+  // Input conditioning: either the `surround` upmix filter (stereo -> 5.1 only) or plain
+  // swr convert/downmix/rematrix. Stereo AC3 output always uses swr.
+  useFilter_ = (p.outputLayout == OutputLayout::Surround51 &&
+                p.upmix == Upmix::Surround &&
+                inLayout_.nb_channels <= 2);
   if (useFilter_ && !BuildFilterGraph())
   {
-    std::fprintf(stderr, "[SpdifEncoder] surround upmix unavailable; using plain upmix/downmix\n");
+    std::fprintf(stderr, "[SpdifEncoder] surround upmix unavailable; using plain rematrix\n");
     useFilter_ = false;
   }
   if (!useFilter_)
   {
-    // swr: interleaved input -> planar-float 5.1 (encoder layout), same sample rate.
+    // swr: interleaved input -> planar-float encoder layout, same sample rate.
     rc = swr_alloc_set_opts2(&swr_, &codecCtx_->ch_layout, AV_SAMPLE_FMT_FLTP, sampleRate_,
                              &inLayout_, inSampleFmt_, sampleRate_, 0, nullptr);
     if (rc < 0 || !swr_) { LogAv("swr_alloc_set_opts2", rc); return false; }
@@ -123,6 +137,10 @@ bool SpdifEncoder::Init(const Params& p)
 
   rc = avformat_write_header(muxer_, nullptr);
   if (rc < 0) { LogAv("avformat_write_header(spdif)", rc); return false; }
+
+  char outDesc[64] = {0};
+  av_channel_layout_describe(&codecCtx_->ch_layout, outDesc, sizeof outDesc);
+  std::printf("[SpdifEncoder] AC3 payload layout: %s\n", outDesc);
 
   return true;
 }
@@ -279,7 +297,7 @@ int SpdifEncoder::EncodePacket(const uint8_t* in, uint8_t* outBuf, int outSize)
   {
     if (av_frame_make_writable(frame_) < 0)
       return -1;
-    // Convert/downmix the interleaved input into the planar-float encoder frame.
+    // Convert/downmix/rematrix the interleaved input into the planar-float encoder frame.
     const uint8_t* inPlanes[1] = { in };
     int got = swr_convert(swr_, frame_->data, frame_->nb_samples, inPlanes, framesPerPacket_);
     if (got < 0) { LogAv("swr_convert", got); return -1; }

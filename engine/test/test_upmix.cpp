@@ -174,3 +174,49 @@ TEST_CASE("upmix=surround steers anti-phase stereo into the surround channels")
   // ...dramatically more than the non-upmixed path -> fails if the upmix were a no-op.
   CHECK(surrOn > 50.0 * surrOff);
 }
+
+
+TEST_CASE("output layout controls decoded AC3 channel count")
+{
+  auto encodeAndDecode = [](SpdifEncoder::OutputLayout layout) {
+    SpdifEncoder::Params p;
+    p.sampleRate = 48000;
+    p.inSampleFmt = AV_SAMPLE_FMT_FLT;
+    p.outputLayout = layout;
+    p.upmix = SpdifEncoder::Upmix::Off;
+    av_channel_layout_default(&p.inLayout, 6);
+
+    SpdifEncoder enc;
+    bool ok = enc.Init(p);
+    av_channel_layout_uninit(&p.inLayout);
+    REQUIRE(ok);
+
+    const int fpp = enc.FramesPerPacket();
+    std::vector<float> in(static_cast<size_t>(fpp) * 6, 0.0f);
+    std::vector<uint8_t> out(SpdifEncoder::kMaxBytesPerPacket);
+    std::vector<uint8_t> stream;
+
+    // Feed signal only to FL/FR. The output layout, not the source endpoint's six-channel
+    // declaration, must determine the decoded AC3 channel count.
+    for (int pk = 0; pk < 6; ++pk)
+    {
+      for (int i = 0; i < fpp; ++i)
+      {
+        in[6 * i] = 0.15f;
+        in[6 * i + 1] = -0.15f;
+      }
+      int n = enc.EncodePacket(reinterpret_cast<uint8_t*>(in.data()), out.data(),
+                               static_cast<int>(out.size()));
+      if (n > 0) stream.insert(stream.end(), out.data(), out.data() + n);
+    }
+
+    REQUIRE_FALSE(stream.empty());
+    return DecodeSpdifAc3Rms(stream.data(), static_cast<int>(stream.size()));
+  };
+
+  const auto stereo = encodeAndDecode(SpdifEncoder::OutputLayout::Stereo);
+  const auto surround = encodeAndDecode(SpdifEncoder::OutputLayout::Surround51);
+
+  CHECK(stereo.size() == 2);
+  CHECK(surround.size() == 6);
+}

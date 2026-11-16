@@ -9,7 +9,7 @@
 //   - swr_alloc_set_opts2
 //
 // Design (from SoundPusher): swresample converts/downmixes the interleaved input to the
-// AC3 encoder's required planar-float 5.1 format; libavcodec encodes one 1536-frame AC3
+// AC3 encoder's required planar-float output layout; libavcodec encodes one 1536-frame AC3
 // packet; libavformat's "spdif" muxer wraps it into an IEC 61937 burst via a custom AVIO
 // write callback that drops the burst straight into the caller's output buffer.
 #pragma once
@@ -35,22 +35,30 @@ public:
   SpdifEncoder(const SpdifEncoder&) = delete;
   SpdifEncoder& operator=(const SpdifEncoder&) = delete;
 
-  // Stereo->5.1 upmix mode. Only applies when the input has <= 2 channels; multichannel
-  // input is always downmixed to 5.1 (by swr) regardless.
+  // Stereo->5.1 upmix mode. Only applies when the selected output layout is 5.1 and the
+  // input has <= 2 channels; multichannel input is downmixed/rematrixed by swr.
   enum class Upmix
   {
-    Off,       // swr default rematrix (front channels only-ish)
+    Off,       // swr default rematrix
     Surround,  // FFmpeg `surround` libavfilter (FFT-based steered upmix)
+  };
+
+  // AC3 payload channel layout. IEC 61937 uses the same two-channel carrier either way;
+  // this controls the AC3 frame's acmod / channel map that the AVR actually decodes.
+  enum class OutputLayout
+  {
+    Stereo,
+    Surround51,
   };
 
   struct Params
   {
-    int sampleRate = 48000;                       // AC3: 48000 / 44100 / 32000
-    int64_t bitRate = 640000;                     // AC3-over-optical maximum
+    int sampleRate = 48000;                         // AC3: 48000 / 44100 / 32000
+    int64_t bitRate = 640000;                       // AC3-over-optical maximum
     AVSampleFormat inSampleFmt = AV_SAMPLE_FMT_FLT; // interleaved input from WASAPI/WAV
-    AVChannelLayout inLayout{};                   // caller-owned; copied in Init().
-                                                  // Any layout; downmixed to 5.1 by swr.
-    Upmix upmix = Upmix::Off;                     // stereo->5.1 upmix mode
+    AVChannelLayout inLayout{};                     // caller-owned; copied in Init()
+    Upmix upmix = Upmix::Off;                       // only relevant for 5.1 output
+    OutputLayout outputLayout = OutputLayout::Surround51;
   };
 
   // Open the encoder. Returns false (and logs to stderr) on failure.
@@ -63,14 +71,15 @@ public:
   // Channels expected in the interleaved input (== inLayout.nb_channels).
   int InChannels() const { return inLayout_.nb_channels; }
 
-  // An IEC 61937 AC3 burst is always 6144 bytes (1536 frames * 2ch * 16-bit).
+  // An IEC 61937 AC3 burst always occupies 6144 bytes on the S/PDIF carrier
+  // (1536 carrier frames * 2ch * 16-bit), regardless of AC3 payload channel count.
   static constexpr int kMaxBytesPerPacket = 6144;
 
   // Encode exactly FramesPerPacket() interleaved input frames into one IEC 61937 burst.
   //   in      : FramesPerPacket() * InChannels() samples in Params::inSampleFmt
   //   outBuf  : destination for the S/PDIF burst
   //   outSize : capacity of outBuf (must be >= kMaxBytesPerPacket)
-  // Returns bytes written (typically 6144), 0 if the encoder produced no packet, <0 on error.
+  // Returns bytes written (normally 6144), 0 if the encoder produced no packet, <0 on error.
   int EncodePacket(const uint8_t* in, uint8_t* outBuf, int outSize);
 
 private:
@@ -78,8 +87,8 @@ private:
   static int WritePacketThunk(void* opaque, const uint8_t* buf, int buf_size);
   int OnWritePacket(const uint8_t* buf, int buf_size);
 
-  bool BuildFilterGraph();              // surround-upmix path
-  bool FeedFilter(const uint8_t* in);  // push one input packet, drain output into fifo_
+  bool BuildFilterGraph();              // stereo -> 5.1 surround-upmix path
+  bool FeedFilter(const uint8_t* in);   // push one input packet, drain output into fifo_
   int  EncodeFrameToBurst(uint8_t* outBuf, int outSize); // frame_ -> AC3 -> IEC61937
 
   AVCodecContext*  codecCtx_ = nullptr;
@@ -88,7 +97,7 @@ private:
   AVFrame*         frame_    = nullptr;  // planar-float scratch fed to the encoder
   AVPacket*        pkt_      = nullptr;
 
-  // surround-upmix pipeline (used when upmix == Surround and input is <= 2ch)
+  // surround-upmix pipeline (5.1 output + upmix == Surround + <=2ch input)
   bool             useFilter_ = false;
   AVFilterGraph*   graph_     = nullptr;
   AVFilterContext* fsrc_      = nullptr; // abuffer
