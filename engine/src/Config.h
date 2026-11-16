@@ -27,6 +27,7 @@ struct Config
   std::wstring guitarInId;
   bool guitarLoopback = false;
   double guitarGain = 0.50; // linear; instrument is inserted into FL/FR after music DSP
+  uint32_t guitarSafeFrames = 480; // 10ms jitter budget at 48k; 0=latest/no margin
 
   // Output endpoint — the optical / Toslink device.
   std::wstring outName;  // friendly-name substring
