@@ -649,6 +649,13 @@ static bool HandleControllerCommandLine(int argc, char** argv)
   {
     std::string a = argv[i];
 
+    if (a == "--launch-guitar")
+    {
+      if (LaunchUi(L"--guitar-launch")) std::exit(0);
+      std::fprintf(stderr, "OHL-Control.exe is required to launch a guitar session\n");
+      std::exit(3);
+    }
+
     if (a == "--switcher")
     {
       if (LaunchUi(nullptr))
@@ -818,6 +825,7 @@ int main(int argc, char** argv)
   std::atomic<RuntimeAudioMode> current{RuntimeAudioMode::Starting};
   std::atomic_int requestedExitCode{0};
   std::atomic_bool reloadConfig{false};
+  std::atomic<uint32_t> guitarSessionPid{0};
   MusicTelemetry musicTelemetry;
   MusicCaptureLogger musicCapture;
   SurroundTestState surroundTest;
@@ -833,7 +841,8 @@ int main(int argc, char** argv)
           &reloadConfig,
           &musicTelemetry,
           &musicCapture,
-          &surroundTest))
+          &surroundTest,
+          &guitarSessionPid))
   {
     std::fprintf(stderr, "[ModeControl] failed to start control server\n");
     CloseHandle(singleton);
@@ -859,6 +868,29 @@ int main(int argc, char** argv)
   auto startTime = std::chrono::steady_clock::now();
   while (!g_stop.load())
   {
+    // Session tracking belongs to the persistent engine, not the mode-switcher
+    // window. Wait for the launched host to exit before taking back S/PDIF.
+    const uint32_t pid = guitarSessionPid.load();
+    if (pid && desired.load() == RuntimeAudioMode::Guitar)
+    {
+      HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+      if (process)
+      {
+        const bool exited = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
+        CloseHandle(process);
+        uint32_t expected = pid;
+        if (exited && guitarSessionPid.compare_exchange_strong(expected, 0))
+        {
+          desired.store(RuntimeAudioMode::Surround);
+          std::printf("[Guitar] ASIO host exited; returning to SURROUND\n");
+        }
+      }
+    }
+    else if (pid && desired.load() != RuntimeAudioMode::Guitar)
+    {
+      guitarSessionPid.store(0);
+    }
+
     if (reloadConfig.exchange(false))
     {
       Config refreshed;
