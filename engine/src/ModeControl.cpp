@@ -68,6 +68,8 @@ void SetStatus(HWND hwnd, const std::string& text)
     w = L"SURROUND ACTIVE  -  encoder owns S/PDIF";
   else if (text == "guitar")
     w = L"GUITAR ACTIVE  -  S/PDIF released for ASIO4ALL";
+  else if (text == "surround+guitar")
+    w = L"SURROUND + GUITAR  -  both mixed over S/PDIF";
   else if (text == "starting")
     w = L"Starting surround engine...";
   else if (text == "stopping")
@@ -87,6 +89,12 @@ void RefreshStatus(HWND hwnd)
   std::string response;
   if (!SendModeCommand("status", response, 250))
     response = "offline";
+  if (response == "surround")
+  {
+    std::string bus;
+    if (SendModeCommand("guitar bus", bus, 250) && bus == "active")
+      response = "surround+guitar";
+  }
   SetStatus(hwnd, response);
 }
 
@@ -336,7 +344,8 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
                               MusicTelemetry* musicTelemetry,
                               MusicCaptureLogger* musicCaptureLogger,
                               SurroundTestState* surroundTestState,
-                              std::atomic<uint32_t>* guitarSessionPid)
+                              std::atomic<uint32_t>* guitarSessionPid,
+                              std::atomic_bool* guitarBusActive)
 {
   if (thread_.joinable())
     return true;
@@ -350,6 +359,7 @@ bool ModeControlServer::Start(std::atomic<RuntimeAudioMode>* desired,
   musicCaptureLogger_ = musicCaptureLogger;
   surroundTestState_ = surroundTestState;
   guitarSessionPid_ = guitarSessionPid;
+  guitarBusActive_ = guitarBusActive;
   stop_.store(false);
 
   try
@@ -448,6 +458,10 @@ void ModeControlServer::ThreadProc()
             response = "ok";
           }
         }
+      }
+      else if (command == "guitar bus")
+      {
+        response = guitarBusActive_ && guitarBusActive_->load() ? "active" : "off";
       }
       else if (command == "reload")
       {
