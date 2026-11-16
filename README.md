@@ -255,6 +255,49 @@ When the hidden background engine is already running, double-clicking `engine.ex
 arguments opens the mode switcher instead of starting a duplicate engine. The installer also adds
 an **Audio mode switcher** Start Menu shortcut.
 
+### One-click OHL guitar sessions
+
+Open **OHL Audio Mode Switcher** and choose **PLAY GUITAR / OPEN ASIO APP**, or select
+**Play guitar / launch ASIO app...** in the OHL tray. The day-to-day installer also creates
+a pinnable **Play Guitar (ASIO)** Start Menu shortcut.
+
+The first launch prompts for the guitar application's executable (e.g. AmpliTube). OHL
+saves that path per-user, independently of ASIO4ALL's per-host device configuration.
+
+A single click requests GUITAR mode, waits until the engine confirms it has destroyed
+its exclusive WASAPI render objects and released S/PDIF, launches the chosen ASIO host,
+and tracks that launched process to restore SURROUND after it exits.
+
+The console accepts --launch-guitar; the native UI accepts --guitar-launch.
+Use **Change Guitar App...** to change the executable. The existing **Guitar**
+mode button is still a *manual release-only* override.
+
+Limitations: this does **not** reinitialize Realtek, modify ASIO4ALL's stored settings,
+or automatically repair ASIO4ALL driver state. Hosts that delegate launches to an
+already-running process may not provide a trackable PID, so automatic mode restoration
+is not guaranteed for those apps. Real hardware validation is still required.
+
+### Surround Wizard / Sparkle Field
+
+Choose **Surround Wizard / Sparkle Field...** from the OHL tray or mode switcher.
+This launches the native Surround Wizard (OHL-Control.exe --surround-wizard).
+
+The Sparkle Field emits short randomized directional events in the five speaker
+channels through the existing AC-3 diagnostic encoder. It does not send program
+audio through ASIO or the virtual cable. Five textures are available:
+Mixed, Sine, Triangle, Metallic, and Noise.
+
+Current defaults: 9 events per second, 240 ms decay, frequencies roughly 700–9000 Hz.
+The requested level is capped at -18 dBFS, LFE remains silent, and the diagnostic
+auto-stops after 16 seconds or when the Wizard is closed. **STOP ALL** restores
+normal program audio immediately. Available only in SURROUND mode.
+
+The named-pipe command accepts:
+- test sparkle [mixed|sine|triangle|metal|noise] [rate] [decay-ms] [level-dB]
+- test stop
+
+Start with a low receiver volume when testing bright high-frequency signals.
+
 ### Tray controller
 
 The persistent engine is intended to be used day to day from the Windows notification area.
@@ -266,7 +309,9 @@ Right-click the icon for:
 
 - **Surround mode** — reacquire VB-CABLE + exclusive AC3 S/PDIF.
 - **Guitar / low-latency mode** — release S/PDIF for ASIO4ALL / AmpliTube.
-- **Open mode switcher...** — open the larger two-button controller.
+- **Open mode switcher...** — open the larger mode controller.
+- **Play guitar / launch ASIO app...** — release S/PDIF and launch the saved host.
+- **Surround Wizard / Sparkle Field...** — open 5.1 spatial diagnostics.
 - **Open engine log** — available when the daemon was launched with `--log`.
 - **Exit engine** — cleanly stop the persistent daemon.
 
