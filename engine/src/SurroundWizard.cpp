@@ -47,11 +47,18 @@ enum ControlId
   kBassMatrix,
   kFlLfeAb,
   kFlLfeM10,
-  kFlLfeInv
+  kFlLfeInv,
+  kSparkleMixed,
+  kSparkleSine,
+  kSparkleTriangle,
+  kSparkleMetal,
+  kSparkleNoise
 };
 
 constexpr UINT_PTR kSweepTimer = 23;
 constexpr UINT_PTR kAutoTimer = 24;
+constexpr UINT_PTR kSparkleTimer = 25;
+constexpr int kSparkleDurationMs = 16000;
 constexpr int kSweepMs = 1500;
 constexpr int kAutoMs = 1300;
 constexpr std::array<int, 7> kSweepFull{{40, 60, 80, 100, 120, 160, 200}};
@@ -64,6 +71,8 @@ HFONT gSmall = nullptr;
 std::string gRoute;
 bool gSweep = false;
 size_t gSweepIndex = 0;
+bool gSparkleActive = false;
+std::string gSparkleTexture = "mixed";
 
 enum class AutoMode
 {
@@ -167,10 +176,17 @@ void StopAuto(HWND hwnd)
   }
 }
 
+void StopSparkleTimer(HWND hwnd)
+{
+  if (gSparkleActive) KillTimer(hwnd, kSparkleTimer);
+  gSparkleActive = false;
+}
+
 void StopTest(HWND hwnd, bool updateUi = true)
 {
   StopSweep(hwnd);
   StopAuto(hwnd);
+  StopSparkleTimer(hwnd);
   std::string response;
   SendModeCommand("test stop", response, 500);
   gRoute.clear();
@@ -181,6 +197,7 @@ void StopTest(HWND hwnd, bool updateUi = true)
 
 bool StartRoute(HWND hwnd, std::string route, bool fromSweep = false)
 {
+  StopSparkleTimer(hwnd);
   int hz = Freq(hwnd);
   if (IsLfeRoute(route) && hz > 120)
   {
@@ -235,17 +252,56 @@ bool StartRoute(HWND hwnd, std::string route, bool fromSweep = false)
   return true;
 }
 
+void StartSparkle(HWND hwnd, const std::string& texture)
+{
+  StopSweep(hwnd);
+  StopAuto(hwnd);
+  StopSparkleTimer(hwnd);
+  // Upper bound is deliberately conservative for bright HF diagnostic events.
+  const double level = std::min(LevelDb(hwnd), -18.0);
+  std::ostringstream cmd;
+  cmd.setf(std::ios::fixed);
+  cmd.precision(1);
+  cmd << "test sparkle " << texture << " 9 240 " << level;
+
+  std::string response;
+  if (!SendModeCommand(cmd.str(), response, 800))
+  {
+    SetStatus(hwnd, L"ENGINE OFFLINE — sparkle unavailable");
+    return;
+  }
+  const auto fields = ParseFields(response);
+  const auto state = fields.find("test_state");
+  if (state == fields.end() || state->second != "active")
+  {
+    SetStatus(hwnd, L"SPARKLE UNAVAILABLE — select Surround mode first");
+    return;
+  }
+
+  gSparkleTexture = texture;
+  gSparkleActive = true;
+  gRoute = "sparkle";
+  CheckRouteButtons(hwnd, "");
+  SetTimer(hwnd, kSparkleTimer, kSparkleDurationMs, nullptr);
+  SetStatus(hwnd, L"SPARKLE FIELD — " +
+      std::wstring(texture.begin(), texture.end()) +
+      L" · 9 events/s · 240 ms decay · auto-stop in 16 s");
+}
+
 void SetQuickFrequency(HWND hwnd, int hz)
 {
   SendDlgItemMessageW(hwnd, kFreq, TBM_SETPOS, TRUE, hz);
   UpdateValueLabels(hwnd);
   if (!gRoute.empty())
+  {
+    if (gRoute == "sparkle") gRoute = "fl";
     StartRoute(hwnd, gRoute);
+  }
 }
 
 void StartSweep(HWND hwnd)
 {
-  if (gRoute.empty())
+  if (gRoute.empty() || gRoute == "sparkle")
     gRoute = "fl";
 
   gSweep = true;
@@ -349,7 +405,7 @@ HWND Label(HWND parent, const wchar_t* text, int x, int y, int w, int h, bool us
 {
   const bool onCard =
       (x >= 475 && x < 785 && y >= 104 && y < 485) ||
-      (x >= 20 && x < 785 && y >= 500 && y < 612);
+      (x >= 20 && x < 785 && y >= 500 && y < 690);
   HWND c = CreateWindowW(
       onCard ? kOhlCardLabelClass : L"STATIC", text, WS_CHILD | WS_VISIBLE,
       x, y, w, h, parent, nullptr, nullptr, nullptr);
@@ -502,7 +558,7 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       HWND characterize = CreateWindowW(
           kOhlGroupClass, L"Characterize",
           WS_CHILD | WS_VISIBLE,
-          20, 500, 765, 112, hwnd, nullptr, nullptr, nullptr);
+          20, 500, 765, 185, hwnd, nullptr, nullptr, nullptr);
       SendMessageW(characterize, WM_SETFONT, reinterpret_cast<WPARAM>(gUi), TRUE);
 
       Button(hwnd, kChannelWalk, L"CHANNEL WALK 1 kHz", 38, 535, 150, 34);
@@ -511,13 +567,19 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Button(hwnd, kFlLfeM10, L"FL + LFE -10 dB", 468, 535, 135, 34);
       Button(hwnd, kFlLfeInv, L"FL + LFE 180°", 613, 535, 140, 34);
 
-      Label(hwnd,
-            L"Automated walks use conservative level.  -10 dB checks LFE calibration; 180° checks crossover phase interaction.",
-            38, 578, 715, 24, true);
+      Label(hwnd, L"SPARKLE FIELD  ·  16 seconds  ·  9 events/s  ·  240 ms decay  ·  700–9000 Hz",
+            38, 580, 710, 20, true);
+      Button(hwnd, kSparkleMixed, L"MIXED", 38, 608, 133, 33);
+      Button(hwnd, kSparkleSine, L"SINE", 182, 608, 133, 33);
+      Button(hwnd, kSparkleTriangle, L"TRIANGLE", 326, 608, 133, 33);
+      Button(hwnd, kSparkleMetal, L"METALLIC", 470, 608, 133, 33);
+      Button(hwnd, kSparkleNoise, L"NOISE", 614, 608, 133, 33);
+      Label(hwnd, L"Bright test sound is level-limited to -18 dBFS; LFE stays silent.",
+            38, 653, 700, 22, true);
 
       Label(hwnd,
             L"Closing this window stops all diagnostics and restores normal OHL Music.",
-            20, 625, 760, 24, true);
+            20, 702, 760, 24, true);
 
       UpdateValueLabels(hwnd);
 
@@ -559,7 +621,10 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       UpdateValueLabels(hwnd);
       const int code = LOWORD(wp);
       if (!gRoute.empty() && (code == TB_ENDTRACK || code == TB_THUMBTRACK))
-        StartRoute(hwnd, gRoute);
+      {
+        if (gRoute == "sparkle") StartSparkle(hwnd, gSparkleTexture);
+        else StartRoute(hwnd, gRoute);
+      }
       return 0;
     }
 
@@ -594,6 +659,11 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case kFlLfeAb: StartAutoMode(hwnd, AutoMode::FlLfeAb); return 0;
         case kFlLfeM10: StartRoute(hwnd, "fl+lfe-10"); return 0;
         case kFlLfeInv: StartRoute(hwnd, "fl+lfe-inv"); return 0;
+        case kSparkleMixed: StartSparkle(hwnd, "mixed"); return 0;
+        case kSparkleSine: StartSparkle(hwnd, "sine"); return 0;
+        case kSparkleTriangle: StartSparkle(hwnd, "triangle"); return 0;
+        case kSparkleMetal: StartSparkle(hwnd, "metal"); return 0;
+        case kSparkleNoise: StartSparkle(hwnd, "noise"); return 0;
       }
       break;
     }
@@ -607,6 +677,11 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       if (wp == kAutoTimer)
       {
         AdvanceAuto(hwnd);
+        return 0;
+      }
+      if (wp == kSparkleTimer)
+      {
+        StopTest(hwnd);
         return 0;
       }
       break;
@@ -636,6 +711,7 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
       StopSweep(hwnd);
       StopAuto(hwnd);
+      StopSparkleTimer(hwnd);
       if (gTitle) { DeleteObject(gTitle); gTitle = nullptr; }
       if (gUi) { DeleteObject(gUi); gUi = nullptr; }
       if (gSmall) { DeleteObject(gSmall); gSmall = nullptr; }
@@ -676,7 +752,7 @@ int RunSurroundWizardGui()
   HWND hwnd = CreateWindowExW(
       0, kClassName, L"OHL Surround Wizard",
       WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-      CW_USEDEFAULT, CW_USEDEFAULT, 820, 700,
+      CW_USEDEFAULT, CW_USEDEFAULT, 820, 790,
       nullptr, nullptr, instance, nullptr);
   if (!hwnd)
     return 1;
