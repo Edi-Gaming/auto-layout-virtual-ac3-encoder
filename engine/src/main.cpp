@@ -912,6 +912,7 @@ int main(int argc, char** argv)
   std::atomic_int requestedExitCode{0};
   std::atomic_bool reloadConfig{false};
   std::atomic<uint32_t> guitarSessionPid{0};
+  std::atomic_bool guitarBusActive{false};
   MusicTelemetry musicTelemetry;
   MusicCaptureLogger musicCapture;
   SurroundTestState surroundTest;
@@ -928,7 +929,8 @@ int main(int argc, char** argv)
           &musicTelemetry,
           &musicCapture,
           &surroundTest,
-          &guitarSessionPid))
+          &guitarSessionPid,
+          &guitarBusActive))
   {
     std::fprintf(stderr, "[ModeControl] failed to start control server\n");
     CloseHandle(singleton);
@@ -994,6 +996,7 @@ int main(int argc, char** argv)
           surroundTest.Stop();
           musicCapture.SetUnavailable();
           pipeline.reset();
+          guitarBusActive.store(false);
           nextRetry = std::chrono::steady_clock::now();
           std::printf("[Config] rebuilding surround pipeline with updated settings\n");
         }
@@ -1016,6 +1019,7 @@ int main(int argc, char** argv)
         surroundTest.Stop();
         musicCapture.SetUnavailable();
         pipeline.reset();
+        guitarBusActive.store(false);
         musicTelemetry.Reset();
 
         {
@@ -1041,6 +1045,7 @@ int main(int argc, char** argv)
         if (candidate)
         {
           pipeline = std::move(candidate);
+          guitarBusActive.store(pipeline->guitarCapture != nullptr);
           {
             std::lock_guard<std::mutex> lock(errorMutex);
             lastError.clear();
@@ -1051,6 +1056,7 @@ int main(int argc, char** argv)
         else
         {
           pipeline.reset();
+          guitarBusActive.store(false);
           {
             std::lock_guard<std::mutex> lock(errorMutex);
             lastError = err;
