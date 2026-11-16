@@ -552,7 +552,7 @@ LRESULT CALLBACK WizardProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       Button(hwnd, kStop, L"STOP ALL", 668, 421, 101, 34);
 
       Label(hwnd,
-            L"500 Hz / 1 kHz = channel ID.  40–200 Hz = bass routing.  LFE is capped at 120 Hz.",
+            L"500/1k: channel ID\n40–200: bass tests\nLFE max: 120 Hz",
             495, 421, 165, 48, true);
 
       HWND characterize = CreateWindowW(
