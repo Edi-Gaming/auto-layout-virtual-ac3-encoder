@@ -115,10 +115,11 @@ bool LaunchGuitarSession(HWND owner, std::wstring& error)
   info.nShow = SW_SHOWNORMAL;
   if (!ShellExecuteExW(&info))
   {
+    const DWORD launchError = GetLastError();
     std::string ignored;
     SendModeCommand("surround", ignored, 1000);
     error = L"Could not launch the selected application (Windows error " +
-            std::to_wstring(GetLastError()) + L").";
+            std::to_wstring(launchError) + L").";
     return false;
   }
 
