@@ -258,7 +258,7 @@ void StartSparkle(HWND hwnd, const std::string& texture)
   StopAuto(hwnd);
   StopSparkleTimer(hwnd);
   // Upper bound is deliberately conservative for bright HF diagnostic events.
-  const double level = std::min(LevelDb(hwnd), -18.0);
+  const double level = (std::min)(LevelDb(hwnd), -18.0);
   std::ostringstream cmd;
   cmd.setf(std::ios::fixed);
   cmd.precision(1);
