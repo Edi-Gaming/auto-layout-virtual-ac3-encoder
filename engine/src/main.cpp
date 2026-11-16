@@ -118,6 +118,10 @@ static void LoadConfigFile(const std::string& path, Config& c)
     auto truthy = [](const std::string& x) { return x == "1" || x == "true" || x == "yes"; };
     if      (k == "in")                c.inName = Widen(v.c_str());
     else if (k == "in_id")             c.inId = Widen(v.c_str());
+    else if (k == "guitar_in")          c.guitarInName = Widen(v.c_str());
+    else if (k == "guitar_in_id")       c.guitarInId = Widen(v.c_str());
+    else if (k == "guitar_loopback")    c.guitarLoopback = truthy(v);
+    else if (k == "guitar_gain")        c.guitarGain = std::strtod(v.c_str(), nullptr);
     else if (k == "out")               c.outName = Widen(v.c_str());
     else if (k == "out_id")            c.outId = Widen(v.c_str());
     else if (k == "bitrate")           c.bitRate = std::strtoll(v.c_str(), nullptr, 10);
@@ -195,6 +199,11 @@ static void ParseArgs(int argc, char** argv, Config& c)
       c.durationSeconds = (int)std::strtol(argv[++i], nullptr, 10);
     else if (a == "--in")         c.inName = next();
     else if (a == "--in-id")      c.inId = next();
+    else if (a == "--guitar-in")      c.guitarInName = next();
+    else if (a == "--guitar-in-id")   c.guitarInId = next();
+    else if (a == "--guitar-loopback") c.guitarLoopback = true;
+    else if (a == "--guitar-gain" && i + 1 < argc)
+      c.guitarGain = std::strtod(argv[++i], nullptr);
     else if (a == "--out")        c.outName = next();
     else if (a == "--out-id")     c.outId = next();
     else if (a == "--out-spdif")  c.outAutoSpdif = true;
@@ -261,6 +270,11 @@ static void ParseArgs(int argc, char** argv, Config& c)
 
 static bool ValidateConfig(const Config& cfg)
 {
+  if (!std::isfinite(cfg.guitarGain) || cfg.guitarGain < 0.0 || cfg.guitarGain > 2.0)
+  {
+    std::fprintf(stderr, "invalid guitar_gain; expected 0..2\n");
+    return false;
+  }
   if (cfg.layout != "auto" && cfg.layout != "5.1")
   {
     std::fprintf(stderr, "invalid layout \"%s\"; expected auto or 5.1\n", cfg.layout.c_str());
@@ -404,6 +418,8 @@ struct RunningPipeline
 {
   std::unique_ptr<RingBuffer> ring;
   std::unique_ptr<WasapiCapture> capture;
+  std::unique_ptr<RingBuffer> guitarRing;
+  std::unique_ptr<WasapiCapture> guitarCapture;
   std::unique_ptr<WasapiPassthrough> output;
 
   ~RunningPipeline()
@@ -414,11 +430,14 @@ struct RunningPipeline
   void Stop()
   {
     if (capture) capture->Stop();
+    if (guitarCapture) guitarCapture->Stop();
     if (output) output->Stop();
 
     // Destruction is intentional here. Stop() alone leaves IAudioClient/IMMDevice COM references
     // alive; destroying the objects fully releases exclusive S/PDIF ownership for ASIO4ALL.
     output.reset();
+    guitarCapture.reset();
+    guitarRing.reset();
     capture.reset();
     ring.reset();
   }
@@ -547,6 +566,63 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(
   p->ring = std::make_unique<RingBuffer>(ringBytes);
   p->capture->SetRing(p->ring.get());
 
+  // Capture processed guitar independently. A single VB-CABLE is enough if the
+  // primary Windows audio stream is taken through a *different* render loopback.
+  // Both inputs must use the same sample clock rate; the output thread bounds
+  // independent clock drift by taking the latest complete guitar packet.
+  const bool guitarEnabled = !cfg.guitarInName.empty() || !cfg.guitarInId.empty();
+  CaptureFormat guitarFmt{};
+  if (guitarEnabled)
+  {
+    ComPtr<IMMDevice> guitarDev;
+    EndpointInfo guitarInfo;
+    const EDataFlow guitarFlow = cfg.guitarLoopback ? eRender : eCapture;
+    bool found = false;
+    if (!cfg.guitarInId.empty())
+    {
+      found = DeviceEnum::GetById(cfg.guitarInId, guitarDev);
+      if (found) guitarInfo.id = cfg.guitarInId;
+    }
+    else
+    {
+      found = DeviceEnum::FindByNameSubstring(
+          guitarFlow, cfg.guitarInName, guitarDev, guitarInfo);
+    }
+    if (!found)
+    {
+      error = "configured guitar input endpoint not found";
+      return nullptr;
+    }
+    // Reading the same endpoint twice duplicates music into the guitar bus.
+    // Reject it rather than silently mixing a second copy.
+    if (cfg.guitarLoopback == cfg.loopback && guitarInfo.id == inInfo.id)
+    {
+      error = "guitar input and music input are the same endpoint";
+      return nullptr;
+    }
+    p->guitarCapture = std::make_unique<WasapiCapture>();
+    if (!p->guitarCapture->Init(guitarDev.Get(), cfg.guitarLoopback))
+    {
+      error = "failed to initialize guitar input capture";
+      return nullptr;
+    }
+    guitarFmt = p->guitarCapture->Format();
+    const bool pcmSupported = guitarFmt.channels >= 1 && guitarFmt.channels <= 2 &&
+        ((guitarFmt.isFloat && guitarFmt.bits == 32) ||
+         (!guitarFmt.isFloat && (guitarFmt.bits == 16 || guitarFmt.bits == 32)));
+    if (!pcmSupported || guitarFmt.sampleRate != cf.sampleRate)
+    {
+      error = "guitar source must be mono/stereo 16/32-bit PCM at the music input sample rate";
+      return nullptr;
+    }
+    p->guitarRing = std::make_unique<RingBuffer>(
+        static_cast<size_t>(8) * 1536 * guitarFmt.bytesPerFrame());
+    p->guitarCapture->SetRing(p->guitarRing.get());
+    std::printf("[GuitarBus] %s: %u ch, %u Hz; gain %.2f; music stays active\n",
+                Narrow(guitarInfo.name.c_str()).c_str(), guitarFmt.channels,
+                guitarFmt.sampleRate, cfg.guitarGain);
+  }
+
   WasapiPassthrough::Params pp;
   pp.bitRate = cfg.bitRate;
   pp.safeFrames = cfg.safeFrames;
@@ -590,6 +666,9 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(
   pp.musicTelemetry = telemetry;
   pp.musicCaptureLogger = captureLogger;
   pp.surroundTestState = surroundTestState;
+  pp.guitarRing = p->guitarRing.get();
+  pp.guitarFormat = guitarFmt;
+  pp.guitarGain = static_cast<float>(cfg.guitarGain);
 
   std::printf("Layout  : %s", pp.autoLayout ? "auto 2.0/5.1" : "fixed 5.1");
   if (pp.autoLayout)
@@ -637,6 +716,13 @@ static std::unique_ptr<RunningPipeline> StartAudioPipeline(
   {
     p->output->Stop();
     error = "failed to start capture";
+    return nullptr;
+  }
+  if (p->guitarCapture && !p->guitarCapture->Start())
+  {
+    p->capture->Stop();
+    p->output->Stop();
+    error = "failed to start guitar capture";
     return nullptr;
   }
 
