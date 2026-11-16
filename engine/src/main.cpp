@@ -759,9 +759,10 @@ static bool HandleControllerCommandLine(int argc, char** argv)
     if (a == "--mode" && i + 1 < argc)
     {
       const std::string command = argv[i + 1];
-      if (command != "surround" && command != "guitar" && command != "status")
+      if (command != "surround" && command != "guitar" && command != "status" &&
+          command != "reload" && command != "guitar bus")
       {
-        std::fprintf(stderr, "invalid --mode value \"%s\"; expected surround, guitar, or status\n",
+        std::fprintf(stderr, "invalid --mode value \"%s\"; expected surround, guitar, status, reload, or guitar bus\n",
                      command.c_str());
         std::exit(2);
       }
