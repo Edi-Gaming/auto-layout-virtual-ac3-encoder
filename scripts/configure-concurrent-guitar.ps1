@@ -47,6 +47,7 @@ if ($Undo) {
     guitar_in_id = ''
     guitar_loopback = 'false'
     guitar_gain = '0.50'
+    guitar_safe_frames = '480'
     layout = 'auto'
     stereo_processing = 'music'
   }
