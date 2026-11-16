@@ -19,6 +19,15 @@ struct Config
   std::wstring inName = L"CABLE Output"; // friendly-name substring (VB-CABLE default)
   std::wstring inId;                     // exact endpoint id (overrides inName)
 
+  // Optional, second live PCM bus. Set guitar_in to a *different* WASAPI
+  // capture endpoint (for example VB-CABLE's CABLE Output) while system audio
+  // uses a separate render endpoint via loopback. Never captures S/PDIF.
+  // Omitted guitar_in => old single-source behavior, unchanged.
+  std::wstring guitarInName;
+  std::wstring guitarInId;
+  bool guitarLoopback = false;
+  double guitarGain = 0.50; // linear; instrument is inserted into FL/FR after music DSP
+
   // Output endpoint — the optical / Toslink device.
   std::wstring outName;  // friendly-name substring
   std::wstring outId;    // exact endpoint id (overrides outName / auto)
